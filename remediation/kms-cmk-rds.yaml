@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'KMS CMK for RDS encryption with annual rotation'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+Resources:
+  RdsCmk:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'CMK for RDS encryption in ${Environment}'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow RDS to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:CreateGrant
+              - kms:DescribeKey
+            Resource: '*'
+          - Sid: Deny DBA key management
+            Effect: Deny
+            Principal:
+              AWS: '*'
+            Action:
+              - kms:ScheduleKeyDeletion
+              - kms:DisableKey
+              - kms:PutKeyPolicy
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalArn': !Sub 'arn:aws:iam::${AWS::AccountId}:role/DatabaseAdmin'
+      Tags:
+        - Key: contoso:environment
+          Value: !Ref Environment
+        - Key: contoso:data-classification
+          Value: confidential
+
+  RdsCmkAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/contoso-rds-${Environment}-${AWS::Region}'
+      TargetKeyId: !Ref RdsCmk
+
+Outputs:
+  KmsKeyId:
+    Value: !Ref RdsCmk
+  KmsKeyArn:
+    Value: !GetAtt RdsCmk.Arn
