@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Network Firewall for centralized egress VPC with threat intelligence'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Egress VPC ID
+  FirewallSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Firewall subnets (one per AZ)
+
+Resources:
+  FirewallPolicy:
+    Type: AWS::NetworkFirewall::FirewallPolicy
+    Properties:
+      FirewallPolicyName: contoso-egress-policy
+      FirewallPolicy:
+        StatelessDefaultActions:
+          - 'aws:forward_to_sfe'
+        StatelessFragmentDefaultActions:
+          - 'aws:forward_to_sfe'
+        StatefulRuleGroupReferences:
+          - ResourceArn: !GetAtt ThreatIntelRuleGroup.RuleGroupArn
+          - ResourceArn: !GetAtt DomainBlockRuleGroup.RuleGroupArn
+
+  ThreatIntelRuleGroup:
+    Type: AWS::NetworkFirewall::RuleGroup
+    Properties:
+      RuleGroupName: contoso-threat-intelligence
+      Type: STATEFUL
+      Capacity: 1000
+      RuleGroup:
+        RulesSource:
+          RulesSourceList:
+            TargetTypes:
+              - HTTP_HOST
+              - TLS_SNI
+            Targets:
+              - '.malware-domain.com'
+              - '.phishing-site.net'
+            GeneratedRulesType: DENYLIST
+
+  DomainBlockRuleGroup:
+    Type: AWS::NetworkFirewall::RuleGroup
+    Properties:
+      RuleGroupName: contoso-domain-blocklist
+      Type: STATEFUL
+      Capacity: 500
+      RuleGroup:
+        RulesSource:
+          StatefulRules:
+            - Action: DROP
+              Header:
+                Destination: ANY
+                DestinationPort: '443'
+                Direction: FORWARD
+                Protocol: TLS
+                Source: ANY
+                SourcePort: ANY
+              RuleOptions:
+                - Keyword: 'tls.sni'
+                  Settings:
+                    - 'malicious-domain.com'
+
+  Firewall:
+    Type: AWS::NetworkFirewall::Firewall
+    Properties:
+      FirewallName: contoso-egress-firewall
+      VpcId: !Ref VpcId
+      SubnetMappings: !Ref FirewallSubnets
+      FirewallPolicyArn: !GetAtt FirewallPolicy.FirewallPolicyArn
+      Tags:
+        - Key: Purpose
+          Value: EgressFiltering
+
+Outputs:
+  FirewallArn:
+    Value: !GetAtt Firewall.FirewallArn
+  FirewallId:
+    Value: !Ref Firewall

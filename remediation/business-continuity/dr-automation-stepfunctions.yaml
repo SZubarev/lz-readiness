@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Step Functions workflow for automated DR failover to us-west-2'
+
+Resources:
+  DRStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: contoso-dr-failover
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Automated DR failover for critical applications",
+          "StartAt": "RestoreRDSSnapshot",
+          "States": {
+            "RestoreRDSSnapshot": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:rds:restoreDBInstanceFromDBSnapshot",
+              "Parameters": {
+                "DbInstanceIdentifier.$": "$.dbInstanceId",
+                "DbSnapshotIdentifier.$": "$.snapshotId",
+                "MultiAZ": true
+              },
+              "Next": "WaitForRDS"
+            },
+            "WaitForRDS": {
+              "Type": "Wait",
+              "Seconds": 300,
+              "Next": "LaunchEC2Instances"
+            },
+            "LaunchEC2Instances": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "contoso-launch-dr-instances",
+                "Payload.$": "$"
+              },
+              "Next": "UpdateDNS"
+            },
+            "UpdateDNS": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+              "Parameters": {
+                "HostedZoneId.$": "$.hostedZoneId",
+                "ChangeBatch": {
+                  "Changes": [
+                    {
+                      "Action": "UPSERT",
+                      "ResourceRecordSet": {
+                        "Name.$": "$.dnsName",
+                        "Type": "CNAME",
+                        "TTL": 60,
+                        "ResourceRecords": [
+                          {"Value.$": "$.drEndpoint"}
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              "Next": "RunSmokeTests"
+            },
+            "RunSmokeTests": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "contoso-dr-smoke-test"
+              },
+              "End": true
+            }
+          }
+        }
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: DRAutomation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'rds:RestoreDBInstanceFromDBSnapshot'
+                  - 'rds:DescribeDBInstances'
+                  - 'route53:ChangeResourceRecordSets'
+                  - 'lambda:InvokeFunction'
+                Resource: '*'
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref DRStateMachine
