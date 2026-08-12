@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Systems Manager Patch Manager baseline and maintenance windows'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+Resources:
+  WindowsPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Sub 'contoso-${Environment}-windows-baseline'
+      Description: Windows Server patch baseline with CIS hardening
+      OperatingSystem: WINDOWS
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: !If [IsProd, 7, 0]
+            ComplianceLevel: CRITICAL
+            EnableNonSecurity: false
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - CriticalUpdates
+                    - SecurityUpdates
+                - Key: MSRC_SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  LinuxPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Sub 'contoso-${Environment}-linux-baseline'
+      Description: Amazon Linux 2023 / RHEL patch baseline
+      OperatingSystem: AMAZON_LINUX_2023
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: !If [IsProd, 7, 0]
+            ComplianceLevel: CRITICAL
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                - Key: SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+
+  MaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: !Sub 'contoso-${Environment}-patching-window'
+      Description: Automated patching maintenance window
+      Schedule: !If [IsProd, 'cron(0 2 ? * SAT *)', 'cron(0 22 ? * * *)']
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
+Outputs:
+  WindowsPatchBaselineId:
+    Value: !Ref WindowsPatchBaseline
+  LinuxPatchBaselineId:
+    Value: !Ref LinuxPatchBaseline
+  MaintenanceWindowId:
+    Value: !Ref MaintenanceWindow

@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cost Anomaly Detection with SNS alerting'
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Default: cloud-ops@contoso.com
+    Description: Email for cost anomaly alerts
+
+Resources:
+  CostAnomalyMonitor:
+    Type: AWS::CE::AnomalyMonitor
+    Properties:
+      MonitorName: contoso-cost-anomaly-monitor
+      MonitorType: DIMENSIONAL
+      MonitorDimension: SERVICE
+
+  CostAnomalySubscription:
+    Type: AWS::CE::AnomalySubscription
+    Properties:
+      SubscriptionName: contoso-cost-alerts
+      MonitorArnList:
+        - !GetAtt CostAnomalyMonitor.MonitorArn
+      Threshold: 100
+      Frequency: DAILY
+      Subscribers:
+        - Type: SNS
+          Address: !Ref CostAlertTopic
+
+  CostAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: contoso-cost-anomaly-alerts
+      DisplayName: Contoso Cost Anomaly Alerts
+      Subscription:
+        - Endpoint: !Ref AlertEmail
+          Protocol: email
+
+  CostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: contoso-monthly-budget
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 50000
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  MonitorArn:
+    Value: !GetAtt CostAnomalyMonitor.MonitorArn
+  AlertTopicArn:
+    Value: !Ref CostAlertTopic

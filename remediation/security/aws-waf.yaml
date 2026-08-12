@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS WAF WebACL for internet-facing ALBs - protects against OWASP Top 10'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Default: prod
+    Description: Environment name for resource tagging
+
+Resources:
+  ContosoWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub 'contoso-${Environment}-web-acl'
+      Scope: REGIONAL
+      Description: WAF WebACL for internet-facing ALBs with OWASP Top 10 protection
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: ContosoWebACLMetric
+      Rules:
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedRulesCommonRuleSetMetric
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedRulesKnownBadInputsRuleSetMetric
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedRulesSQLiRuleSetMetric
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Purpose
+          Value: OWASP-Top-10-Protection
+
+Outputs:
+  WebACLId:
+    Description: WAF WebACL ID for ALB association
+    Value: !GetAtt ContosoWebACL.Id
+    Export:
+      Name: !Sub '${AWS::StackName}-WebACLId'
+  WebACLArn:
+    Description: WAF WebACL ARN
+    Value: !GetAtt ContosoWebACL.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-WebACLArn'

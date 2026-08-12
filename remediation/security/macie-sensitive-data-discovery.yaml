@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Macie for automated PII/PCI data discovery in S3'
+
+Resources:
+  MacieSession:
+    Type: AWS::Macie::Session
+    Properties:
+      Status: ENABLED
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  MacieCustomDataIdentifier:
+    Type: AWS::Macie::CustomDataIdentifier
+    Properties:
+      Name: contoso-credit-card-pattern
+      Description: Custom identifier for credit card patterns
+      Regex: '\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b'
+      MaximumMatchDistance: 50
+
+  MacieClassificationJob:
+    Type: AWS::Macie::FindingsFilter
+    Properties:
+      Name: contoso-pii-findings
+      Description: Filter for PII and PCI-DSS findings
+      FindingCriteria:
+        Criterion:
+          'category':
+            eq:
+              - CLASSIFICATION
+          'severity.description':
+            eq:
+              - High
+              - Critical
+      Action: ARCHIVE
+
+  MacieAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: contoso-macie-findings
+      DisplayName: Macie Sensitive Data Findings
+
+  MacieEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: contoso-macie-high-severity
+      Description: Alert on high-severity Macie findings
+      EventPattern:
+        source:
+          - aws.macie
+        detail-type:
+          - Macie Finding
+        detail:
+          severity:
+            description:
+              - High
+              - Critical
+      State: ENABLED
+      Targets:
+        - Arn: !Ref MacieAlertTopic
+          Id: MacieSNSTarget
+
+Outputs:
+  MacieSessionArn:
+    Value: !GetAtt MacieSession.ServiceRole
+  AlertTopicArn:
+    Value: !Ref MacieAlertTopic

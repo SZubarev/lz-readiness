@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 Image Builder pipeline for golden AMIs with CIS hardening'
+
+Parameters:
+  BaseImageOS:
+    Type: String
+    AllowedValues: [windows-server-2022, amazon-linux-2023, rhel-9]
+    Default: amazon-linux-2023
+
+Resources:
+  ImageBuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Sub 'contoso-${BaseImageOS}-cis-hardened'
+      Version: '1.0.0'
+      ParentImage: !Sub 'arn:aws:imagebuilder:${AWS::Region}:aws:image/${BaseImageOS}/x.x.x'
+      Components:
+        - ComponentArn: !Sub 'arn:aws:imagebuilder:${AWS::Region}:aws:component/amazon-cloudwatch-agent-linux/x.x.x'
+        - ComponentArn: !Sub 'arn:aws:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-linux/x.x.x'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+      Tags:
+        ManagedBy: ImageBuilder
+        CISHardened: 'true'
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Sub 'contoso-${BaseImageOS}-pipeline'
+      ImageRecipeArn: !GetAtt ImageRecipe.Arn
+      InfrastructureConfigurationArn: !GetAtt InfraConfig.Arn
+      Schedule:
+        ScheduleExpression: 'cron(0 0 1 * ? *)'
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+      Status: ENABLED
+
+  InfraConfig:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub 'contoso-${BaseImageOS}-infra'
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      InstanceTypes:
+        - t3.medium
+      TerminateInstanceOnFailure: true
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ImageBuilderRole
+
+Outputs:
+  PipelineArn:
+    Value: !GetAtt ImagePipeline.Arn
