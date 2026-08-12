@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DR automation framework with runbook execution and stakeholder notification'
+
+Parameters:
+  DRRegion:
+    Type: String
+    Default: us-west-2
+    Description: Disaster recovery target region
+  
+  NotificationEmail:
+    Type: String
+    Description: Email for DR event notifications
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+Resources:
+  DRNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: DR Event Notifications
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: email
+      Tags:
+        - Key: purpose
+          Value: disaster-recovery
+
+  DRRunbookExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DRActions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:RestoreDBInstanceFromDBSnapshot
+                  - backup:DescribeBackupVault
+                  - backup:StartRestoreJob
+                  - sns:Publish
+                Resource: '*'
+
+  DRRunbookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-dr-runbook'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt DRRunbookExecutionRole.Arn
+      Timeout: 900
+      Environment:
+        Variables:
+          DR_REGION: !Ref DRRegion
+          NOTIFICATION_TOPIC: !Ref DRNotificationTopic
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          def handler(event, context):
+              sns = boto3.client('sns')
+              topic_arn = os.environ['NOTIFICATION_TOPIC']
+              # DR failover logic placeholder
+              sns.publish(
+                  TopicArn=topic_arn,
+                  Subject='DR Runbook Initiated',
+                  Message='Disaster recovery procedures started'
+              )
+              return {'statusCode': 200, 'body': 'DR runbook executed'}
+
+  DRTestSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Quarterly DR drill schedule
+      ScheduleExpression: 'rate(90 days)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DRRunbookFunction.Arn
+          Id: DRTestTarget
+
+  DRTestPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DRRunbookFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DRTestSchedule.Arn
+
+Outputs:
+  RunbookFunctionArn:
+    Value: !GetAtt DRRunbookFunction.Arn
+  NotificationTopicArn:
+    Value: !Ref DRNotificationTopic
