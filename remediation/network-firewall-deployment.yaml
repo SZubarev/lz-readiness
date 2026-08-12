@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Deploy AWS Network Firewall for centralized inspection'
+
+Resources:
+  NetworkFirewall:
+    Type: AWS::NetworkFirewall::Firewall
+    Properties:
+      FirewallName: contoso-central-firewall
+      FirewallPolicyArn: !Ref FirewallPolicy
+      VpcId: !Ref InspectionVPCId
+      SubnetMappings:
+        - SubnetId: !Ref FirewallSubnet1
+        - SubnetId: !Ref FirewallSubnet2
+        - SubnetId: !Ref FirewallSubnet3
+      Tags:
+        - Key: Name
+          Value: contoso-central-firewall
+
+  FirewallPolicy:
+    Type: AWS::NetworkFirewall::FirewallPolicy
+    Properties:
+      FirewallPolicyName: contoso-firewall-policy
+      FirewallPolicy:
+        StatelessDefaultActions:
+          - 'aws:forward_to_sfe'
+        StatelessFragmentDefaultActions:
+          - 'aws:forward_to_sfe'
+        StatefulRuleGroupReferences:
+          - ResourceArn: !Ref StatefulRuleGroup
+
+  StatefulRuleGroup:
+    Type: AWS::NetworkFirewall::RuleGroup
+    Properties:
+      RuleGroupName: contoso-stateful-rules
+      Type: STATEFUL
+      Capacity: 100
+      RuleGroup:
+        RulesSource:
+          RulesSourceList:
+            TargetTypes:
+              - HTTP_HOST
+              - TLS_SNI
+            Targets:
+              - '.malware.com'
+              - '.phishing.net'
+            GeneratedRulesType: DENYLIST
+
+  FirewallLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/networkfirewall/contoso-central
+      RetentionInDays: 90
+
+  FirewallLogging:
+    Type: AWS::NetworkFirewall::LoggingConfiguration
+    Properties:
+      FirewallArn: !Ref NetworkFirewall
+      LoggingConfiguration:
+        LogDestinationConfigs:
+          - LogType: FLOW
+            LogDestinationType: CloudWatchLogs
+            LogDestination:
+              logGroup: !Ref FirewallLogGroup
+          - LogType: ALERT
+            LogDestinationType: CloudWatchLogs
+            LogDestination:
+              logGroup: !Ref FirewallLogGroup
+
+Parameters:
+  InspectionVPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for Network Firewall deployment
+  FirewallSubnet1:
+    Type: AWS::EC2::Subnet::Id
+  FirewallSubnet2:
+    Type: AWS::EC2::Subnet::Id
+  FirewallSubnet3:
+    Type: AWS::EC2::Subnet::Id
+
+Outputs:
+  FirewallId:
+    Value: !Ref NetworkFirewall
+    Export:
+      Name: !Sub '${AWS::StackName}-FirewallId'
