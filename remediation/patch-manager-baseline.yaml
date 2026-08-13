@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Systems Manager Patch Manager baseline for 1,214 servers'
+
+Resources:
+  WindowsPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: contoso-windows-baseline
+      Description: Patch baseline for Windows servers
+      OperatingSystem: WINDOWS
+      PatchGroups:
+        - contoso-windows
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - CriticalUpdates
+                    - SecurityUpdates
+                - Key: MSRC_SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+            EnableNonSecurity: false
+
+  LinuxPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: contoso-linux-baseline
+      Description: Patch baseline for Linux servers
+      OperatingSystem: AMAZON_LINUX_2
+      PatchGroups:
+        - contoso-linux
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                - Key: SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+
+  MaintenanceWindowDev:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: contoso-dev-patch-window
+      Description: Wednesday 2 AM UTC patch window for Dev
+      Schedule: cron(0 2 ? * WED *)
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  MaintenanceWindowProd:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: contoso-prod-patch-window
+      Description: Sunday 2 AM UTC patch window for Production
+      Schedule: cron(0 2 ? * SUN *)
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+Outputs:
+  WindowsBaselineId:
+    Value: !Ref WindowsPatchBaseline
+  LinuxBaselineId:
+    Value: !Ref LinuxPatchBaseline

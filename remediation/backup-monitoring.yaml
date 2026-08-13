@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Backup monitoring with CloudWatch Alarms'
+
+Parameters:
+  SNSTopicArn:
+    Type: String
+    Description: SNS Topic ARN for alerts (PagerDuty integration)
+
+Resources:
+  BackupJobFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: contoso-backup-job-failed
+      AlarmDescription: Alert when backup job fails
+      MetricName: NumberOfBackupJobsFailed
+      Namespace: AWS/Backup
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref SNSTopicArn
+      TreatMissingData: notBreaching
+
+  BackupJobCompletedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: contoso-backup-job-success
+      AlarmDescription: Monitor successful backup jobs
+      MetricName: NumberOfBackupJobsCompleted
+      Namespace: AWS/Backup
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref SNSTopicArn
+      TreatMissingData: breaching
+
+  RestoreJobFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: contoso-restore-job-failed
+      AlarmDescription: Alert when restore job fails
+      MetricName: NumberOfRestoreJobsFailed
+      Namespace: AWS/Backup
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref SNSTopicArn
+      TreatMissingData: notBreaching
+
+  BackupDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: contoso-backup-monitoring
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/Backup", "NumberOfBackupJobsCompleted"],
+                  [".", "NumberOfBackupJobsFailed"]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Backup Job Status"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardURL:
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=contoso-backup-monitoring'
