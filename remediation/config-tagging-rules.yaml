@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Config Rules for mandatory tagging enforcement'
+
+Resources:
+  RequiredTagsRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: contoso-required-tags
+      Description: Ensure all resources have mandatory Contoso tags
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters:
+        tag1Key: contoso:environment
+        tag2Key: contoso:business-unit
+        tag3Key: contoso:application-id
+        tag4Key: contoso:cost-center
+        tag5Key: contoso:data-classification
+        tag6Key: contoso:owner
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+          - AWS::EC2::Volume
+          - AWS::RDS::DBInstance
+          - AWS::S3::Bucket
+          - AWS::Lambda::Function
+
+  AutoRemediationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonSSMAutomationRole
+      Policies:
+        - PolicyName: TagRemediationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - rds:AddTagsToResource
+                  - s3:PutBucketTagging
+                  - lambda:TagResource
+                Resource: '*'
+
+  TagComplianceDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: contoso-tag-compliance
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/Config", "ComplianceScore", {"stat": "Average"}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Tagging Compliance Score"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  ConfigRuleName:
+    Value: !Ref RequiredTagsRule
