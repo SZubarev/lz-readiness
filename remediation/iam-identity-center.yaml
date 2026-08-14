@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM Identity Center permission sets (demoted from docs - no code found)'
+
+Resources:
+  ReadOnlyPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: ReadOnlyAccess
+      Description: Read-only access to AWS resources
+      InstanceArn: !Sub 'arn:aws:sso:::instance/${IdentityStoreId}'
+      SessionDuration: PT8H
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  PowerUserPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: PowerUserAccess
+      Description: Full access except IAM
+      InstanceArn: !Sub 'arn:aws:sso:::instance/${IdentityStoreId}'
+      SessionDuration: PT8H
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+
+Parameters:
+  IdentityStoreId:
+    Type: String
+    Description: IAM Identity Center instance ID

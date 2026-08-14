@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SSM Patch Manager with maintenance windows'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+Resources:
+  PatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Sub '${Environment}-baseline'
+      Description: Patch baseline for OS patching
+      OperatingSystem: !If [IsWindows, WINDOWS, AMAZON_LINUX_2]
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: !If [IsProd, 7, 0]
+            ComplianceLevel: CRITICAL
+            EnableNonSecurity: false
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values: [Security, CriticalUpdates]
+                - Key: SEVERITY
+                  Values: [Critical, Important]
+
+  MaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: !Sub '${Environment}-patching-window'
+      Schedule: !If [IsProd, 'cron(0 2 ? * SAT#2 *)', 'cron(0 2 ? * SUN *)']
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  MaintenanceWindowTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+        - Key: tag:Environment
+          Values: [!Ref Environment]
+
+  PatchTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      TaskType: RUN_COMMAND
+      ServiceRoleArn: !GetAtt MaintenanceWindowRole.Arn
+      TaskArn: AWS-RunPatchBaseline
+      Priority: 1
+      MaxConcurrency: 50%
+      MaxErrors: 25%
+      Targets:
+        - Key: WindowTargetIds
+          Values: [!Ref MaintenanceWindowTarget]
+
+  MaintenanceWindowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  IsWindows: !Equals [!Ref Environment, prod]

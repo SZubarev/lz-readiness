@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS Multi-AZ with automated backups (demoted - no code found)'
+
+Parameters:
+  DBInstanceClass:
+    Type: String
+    Default: db.r5.large
+  Environment:
+    Type: String
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - subnet-xxx
+        - subnet-yyy
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${Environment}-postgres'
+      Engine: postgres
+      EngineVersion: '15.4'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 100
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !ImportValue RDSEncryptionKey
+      MultiAZ: true
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      BackupRetentionPeriod: 35
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      EnableCloudwatchLogsExports:
+        - postgresql
+      DeletionProtection: true
+
+Outputs:
+  Endpoint:
+    Value: !GetAtt RDSInstance.Endpoint.Address

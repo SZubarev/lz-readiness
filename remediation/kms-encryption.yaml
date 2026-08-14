@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'KMS CMKs for encryption (demoted - no code found)'
+
+Parameters:
+  Environment:
+    Type: String
+
+Resources:
+  RDSEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'RDS encryption key for ${Environment}'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow RDS to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:DescribeKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+      EnableKeyRotation: true
+
+  RDSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/contoso-rds-${Environment}'
+      TargetKeyId: !Ref RDSEncryptionKey
+
+Outputs:
+  KeyId:
+    Value: !Ref RDSEncryptionKey
+  KeyArn:
+    Value: !GetAtt RDSEncryptionKey.Arn

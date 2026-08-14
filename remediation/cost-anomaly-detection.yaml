@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cost Anomaly Detection with SNS alerting'
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: Email for cost anomaly alerts
+
+Resources:
+  CostAnomalyMonitor:
+    Type: AWS::CE::AnomalyMonitor
+    Properties:
+      MonitorName: !Sub '${AWS::AccountId}-cost-monitor'
+      MonitorType: DIMENSIONAL
+      MonitorDimension: SERVICE
+
+  AnomalyAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cost-anomaly-alerts
+      DisplayName: Cost Anomaly Alerts
+      Subscription:
+        - Endpoint: !Ref AlertEmail
+          Protocol: email
+
+  CostAnomalySubscription:
+    Type: AWS::CE::AnomalySubscription
+    Properties:
+      SubscriptionName: !Sub '${AWS::AccountId}-anomaly-alerts'
+      MonitorArnList:
+        - !GetAtt CostAnomalyMonitor.MonitorArn
+      Subscribers:
+        - Type: SNS
+          Address: !Ref AnomalyAlertTopic
+      Threshold: 100
+      ThresholdExpression: !Sub |
+        {
+          "Dimensions": {
+            "Key": "ANOMALY_TOTAL_IMPACT_ABSOLUTE",
+            "Values": ["100"]
+          }
+        }
+
+Outputs:
+  MonitorArn:
+    Value: !GetAtt CostAnomalyMonitor.MonitorArn
+  AlertTopicArn:
+    Value: !Ref AnomalyAlertTopic
