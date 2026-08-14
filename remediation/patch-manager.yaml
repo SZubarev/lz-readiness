@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Systems Manager Patch Manager configuration with maintenance windows'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+Mappings:
+  MaintenanceSchedule:
+    dev:
+      CronExpression: 'cron(0 2 ? * SUN *)'
+      Duration: 2
+    staging:
+      CronExpression: 'cron(0 2 ? * SUN/2 *)'
+      Duration: 4
+    prod:
+      CronExpression: 'cron(0 2 ? * SUN#1 *)'
+      Duration: 8
+
+Resources:
+  PatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Sub '${Environment}-baseline'
+      OperatingSystem: AMAZON_LINUX_2
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values: [Security, Bugfix]
+                - Key: SEVERITY
+                  Values: [Critical, Important]
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  MaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: !Sub '${Environment}-patching-window'
+      Schedule: !FindInMap [MaintenanceSchedule, !Ref Environment, CronExpression]
+      Duration: !FindInMap [MaintenanceSchedule, !Ref Environment, Duration]
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  PatchTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      TaskType: RUN_COMMAND
+      TaskArn: AWS-RunPatchBaseline
+      MaxConcurrency: '10%'
+      MaxErrors: '5%'
+      Priority: 1
+      Targets:
+        - Key: tag:Environment
+          Values:
+            - !Ref Environment
+
+Outputs:
+  PatchBaselineId:
+    Description: Patch baseline ID
+    Value: !Ref PatchBaseline
+  MaintenanceWindowId:
+    Description: Maintenance window ID
+    Value: !Ref MaintenanceWindow

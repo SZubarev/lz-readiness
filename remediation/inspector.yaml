@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Inspector v2 enablement for continuous vulnerability scanning'
+
+Resources:
+  InspectorEnablement:
+    Type: AWS::Inspector2::Enabler
+    Properties:
+      ResourceTypes:
+        - EC2
+        - ECR
+        - LAMBDA
+
+  InspectorSecurityHubIntegration:
+    Type: AWS::SecurityHub::Integration
+    Properties:
+      ProductArn: !Sub 'arn:aws:securityhub:${AWS::Region}::product/aws/inspector'
+
+  InspectorFindingsEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: inspector-critical-findings
+      Description: Alert on critical Inspector findings
+      EventPattern:
+        source:
+          - aws.inspector2
+        detail-type:
+          - Inspector2 Finding
+        detail:
+          severity:
+            - CRITICAL
+      State: ENABLED
+      Targets:
+        - Arn: !Ref InspectorAlertTopic
+          Id: InspectorAlerts
+
+  InspectorAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: inspector-critical-alerts
+      DisplayName: Inspector Critical Vulnerability Alerts
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  InspectorTopicArn:
+    Description: SNS topic for Inspector alerts
+    Value: !Ref InspectorAlertTopic
