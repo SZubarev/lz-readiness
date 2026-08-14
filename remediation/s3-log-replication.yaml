@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'S3 cross-region replication for Log Archive bucket DR'
+
+Parameters:
+  SourceBucketName:
+    Type: String
+    Description: Source log archive bucket name
+  DestinationRegion:
+    Type: String
+    Default: us-west-2
+    Description: Destination region for log replication
+
+Resources:
+  ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3ReplicationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetReplicationConfiguration
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::${SourceBucketName}'
+              - Effect: Allow
+                Action:
+                  - s3:GetObjectVersionForReplication
+                  - s3:GetObjectVersionAcl
+                Resource: !Sub 'arn:aws:s3:::${SourceBucketName}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ReplicateObject
+                  - s3:ReplicateDelete
+                Resource: !Sub 'arn:aws:s3:::${SourceBucketName}-dr/*'
+
+  DestinationBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${SourceBucketName}-dr'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToGlacier
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+
+Outputs:
+  ReplicationRoleArn:
+    Description: IAM role for S3 replication
+    Value: !GetAtt ReplicationRole.Arn
+  DestinationBucketArn:
+    Description: Destination bucket ARN
+    Value: !GetAtt DestinationBucket.Arn

@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Macie enablement for automated PII detection in S3'
+
+Resources:
+  MacieSession:
+    Type: AWS::Macie::Session
+    Properties:
+      Status: ENABLED
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  MacieSecurityHubIntegration:
+    Type: AWS::SecurityHub::Integration
+    Properties:
+      ProductArn: !Sub 'arn:aws:securityhub:${AWS::Region}::product/aws/macie'
+
+  MacieFindingsEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: macie-pii-findings
+      Description: Alert on Macie PII findings
+      EventPattern:
+        source:
+          - aws.macie
+        detail-type:
+          - Macie Finding
+        detail:
+          severity:
+            description:
+              - High
+              - Critical
+      State: ENABLED
+      Targets:
+        - Arn: !Ref MacieAlertTopic
+          Id: MacieAlerts
+
+  MacieAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: macie-pii-alerts
+      DisplayName: Macie PII Detection Alerts
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  MacieTopicArn:
+    Description: SNS topic for Macie PII alerts
+    Value: !Ref MacieAlertTopic
