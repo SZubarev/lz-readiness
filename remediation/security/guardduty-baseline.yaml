@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enable AWS GuardDuty for threat detection across all regions'
+
+Resources:
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  GuardDutySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: guardduty-findings
+      DisplayName: GuardDuty Security Findings
+
+  GuardDutyEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: guardduty-finding-events
+      Description: Capture GuardDuty findings
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Finding
+      Targets:
+        - Arn: !Ref GuardDutySNSTopic
+          Id: GuardDutyTopic
+
+Outputs:
+  DetectorId:
+    Description: GuardDuty Detector ID
+    Value: !Ref GuardDutyDetector
+  SNSTopicArn:
+    Description: SNS Topic for GuardDuty alerts
+    Value: !Ref GuardDutySNSTopic
