@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS Budgets with anomaly detection and SNS alerting for cost governance'
+Description: 'AWS Budgets with threshold alerts and Cost Anomaly Detection'
 
 Parameters:
-  MonthlyBudgetAmount:
+  MonthlyBudgetLimit:
     Type: Number
-    Description: 'Monthly budget amount in USD'
-    Default: 50000
+    Description: 'Monthly budget limit in USD'
+    Default: 10000
   
   AlertEmail:
     Type: String
@@ -13,78 +13,90 @@ Parameters:
     Default: 'finops@contoso.com'
 
 Resources:
-  BudgetAlertTopic:
-    Type: 'AWS::SNS::Topic'
+  # SNS topic for cost alerts
+  CostAlertTopic:
+    Type: AWS::SNS::Topic
     Properties:
       TopicName: 'contoso-cost-alerts'
-      DisplayName: 'Contoso Cost Budget Alerts'
+      DisplayName: 'Contoso Cost Alerts'
       Subscription:
         - Endpoint: !Ref AlertEmail
           Protocol: email
 
+  # Monthly budget with multiple thresholds
   MonthlyBudget:
-    Type: 'AWS::Budgets::Budget'
+    Type: AWS::Budgets::Budget
     Properties:
       Budget:
-        BudgetName: !Sub '${AWS::StackName}-monthly-budget'
-        BudgetLimit:
-          Amount: !Ref MonthlyBudgetAmount
-          Unit: USD
-        TimeUnit: MONTHLY
+        BudgetName: 'contoso-monthly-budget'
         BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetLimit
+          Unit: USD
         CostFilters:
           TagKeyValue:
-            - 'user:contoso:environment$production'
+            - 'user:business-unit$contoso'
       NotificationsWithSubscribers:
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
             Threshold: 50
+            ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: SNS
-              Address: !Ref BudgetAlertTopic
+              Address: !Ref CostAlertTopic
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
             Threshold: 75
+            ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: SNS
-              Address: !Ref BudgetAlertTopic
+              Address: !Ref CostAlertTopic
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
             Threshold: 90
+            ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: SNS
-              Address: !Ref BudgetAlertTopic
+              Address: !Ref CostAlertTopic
         - Notification:
             NotificationType: FORECASTED
             ComparisonOperator: GREATER_THAN
             Threshold: 100
+            ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: SNS
-              Address: !Ref BudgetAlertTopic
+              Address: !Ref CostAlertTopic
 
+  # Cost Anomaly Detection Monitor
   CostAnomalyMonitor:
-    Type: 'AWS::CE::AnomalyMonitor'
+    Type: AWS::CE::AnomalyMonitor
     Properties:
-      MonitorName: !Sub '${AWS::StackName}-anomaly-monitor'
+      MonitorName: 'contoso-cost-anomaly-monitor'
       MonitorType: DIMENSIONAL
       MonitorDimension: SERVICE
 
+  # Cost Anomaly Subscription
   CostAnomalySubscription:
-    Type: 'AWS::CE::AnomalySubscription'
+    Type: AWS::CE::AnomalySubscription
     Properties:
-      SubscriptionName: !Sub '${AWS::StackName}-anomaly-subscription'
-      Threshold: 100
+      SubscriptionName: 'contoso-anomaly-alerts'
       Frequency: DAILY
       MonitorArnList:
         - !GetAtt CostAnomalyMonitor.MonitorArn
       Subscribers:
         - Type: SNS
-          Address: !Ref BudgetAlertTopic
+          Address: !Ref CostAlertTopic
+      Threshold: 100
 
 Outputs:
-  BudgetTopicArn:
-    Description: 'SNS Topic ARN for budget alerts'
-    Value: !Ref BudgetAlertTopic
+  BudgetName:
+    Description: 'Name of the monthly budget'
+    Value: 'contoso-monthly-budget'
+  
+  AlertTopicArn:
+    Description: 'SNS topic ARN for cost alerts'
+    Value: !Ref CostAlertTopic

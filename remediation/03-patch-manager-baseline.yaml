@@ -1,91 +1,130 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS Systems Manager Patch Manager with automated patching for EC2 instances'
+Description: 'SSM Patch Manager baseline with automated patching schedule'
+
+Parameters:
+  MaintenanceWindowDay:
+    Type: String
+    Description: 'Day of week for maintenance window'
+    Default: 'SUN'
+    AllowedValues:
+      - 'MON'
+      - 'TUE'
+      - 'WED'
+      - 'THU'
+      - 'FRI'
+      - 'SAT'
+      - 'SUN'
+  
+  MaintenanceWindowStartHour:
+    Type: Number
+    Description: 'Start hour (24h format UTC)'
+    Default: 2
+    MinValue: 0
+    MaxValue: 23
 
 Resources:
-  PatchBaseline:
-    Type: 'AWS::SSM::PatchBaseline'
+  # Patch baseline for Linux
+  LinuxPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
     Properties:
-      Name: 'contoso-production-baseline'
-      Description: 'Patch baseline for production EC2 instances'
-      OperatingSystem: WINDOWS
-      PatchGroups:
-        - 'production'
+      Name: 'contoso-linux-baseline'
+      Description: 'Patch baseline for RHEL and Amazon Linux'
+      OperatingSystem: AMAZON_LINUX_2
       ApprovalRules:
         PatchRules:
-          - PatchFilterGroup:
+          - ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+            PatchFilterGroup:
               PatchFilters:
                 - Key: CLASSIFICATION
                   Values:
-                    - CriticalUpdates
+                    - Security
+                - Key: SEVERITY
+                  Values:
+                    - Critical
+          - ApproveAfterDays: 14
+            ComplianceLevel: HIGH
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                    - Bugfix
+
+  # Patch baseline for Windows
+  WindowsPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: 'contoso-windows-baseline'
+      Description: 'Patch baseline for Windows Server'
+      OperatingSystem: WINDOWS
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
                     - SecurityUpdates
+                    - CriticalUpdates
                 - Key: MSRC_SEVERITY
                   Values:
                     - Critical
-                    - Important
-            ApproveAfterDays: 7
-            ComplianceLevel: CRITICAL
-          - PatchFilterGroup:
+          - ApproveAfterDays: 14
+            ComplianceLevel: HIGH
+            PatchFilterGroup:
               PatchFilters:
                 - Key: CLASSIFICATION
                   Values:
+                    - SecurityUpdates
                     - Updates
-            ApproveAfterDays: 14
-            ComplianceLevel: HIGH
 
-  MaintenanceWindow:
-    Type: 'AWS::SSM::MaintenanceWindow'
+  # Maintenance window
+  PatchMaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
     Properties:
-      Name: 'contoso-production-patching'
-      Description: 'Automated patching for production instances'
-      Schedule: 'cron(0 2 ? * SUN *)'
+      Name: 'contoso-patch-window'
+      Description: 'Weekly patching maintenance window'
+      Schedule: !Sub 'cron(0 ${MaintenanceWindowStartHour} ? * ${MaintenanceWindowDay} *)'
       Duration: 4
       Cutoff: 1
       AllowUnassociatedTargets: false
 
-  MaintenanceWindowTarget:
-    Type: 'AWS::SSM::MaintenanceWindowTarget'
+  # Maintenance window target (all managed instances)
+  PatchTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
     Properties:
-      WindowId: !Ref MaintenanceWindow
+      WindowId: !Ref PatchMaintenanceWindow
       ResourceType: INSTANCE
       Targets:
-        - Key: 'tag:contoso:environment'
+        - Key: tag:environment
           Values:
             - production
-        - Key: 'tag:PatchGroup'
-          Values:
-            - production
+            - staging
 
-  MaintenanceWindowTask:
-    Type: 'AWS::SSM::MaintenanceWindowTask'
+  # Patch task
+  PatchTask:
+    Type: AWS::SSM::MaintenanceWindowTask
     Properties:
-      WindowId: !Ref MaintenanceWindow
+      WindowId: !Ref PatchMaintenanceWindow
       Targets:
         - Key: WindowTargetIds
           Values:
-            - !Ref MaintenanceWindowTarget
-      TaskArn: 'AWS-RunPatchBaseline'
-      ServiceRoleArn: !GetAtt MaintenanceWindowRole.Arn
+            - !Ref PatchTarget
       TaskType: RUN_COMMAND
+      ServiceRoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ssm.amazonaws.com/AWSServiceRoleForAmazonSSM'
+      TaskArn: 'AWS-RunPatchBaseline'
       TaskInvocationParameters:
         MaintenanceWindowRunCommandParameters:
           Parameters:
             Operation:
               - Install
-
-  MaintenanceWindowRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ssm.amazonaws.com
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole'
+      Priority: 1
+      MaxConcurrency: '10%'
+      MaxErrors: '5%'
 
 Outputs:
-  PatchBaselineId:
-    Description: 'Patch Baseline ID'
-    Value: !Ref PatchBaseline
+  MaintenanceWindowId:
+    Description: 'Patch maintenance window ID'
+    Value: !Ref PatchMaintenanceWindow

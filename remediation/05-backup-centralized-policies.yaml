@@ -1,24 +1,35 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS Backup with centralized policies for RDS and EBS'
+Description: 'AWS Backup centralized policies with 35-day operational + 7-year archival retention'
+
+Parameters:
+  OperationalRetentionDays:
+    Type: Number
+    Description: 'Operational backup retention (days)'
+    Default: 35
+  
+  ArchivalRetentionYears:
+    Type: Number
+    Description: 'Archival backup retention (years)'
+    Default: 7
 
 Resources:
+  # Backup vault with KMS encryption
   BackupVault:
-    Type: 'AWS::Backup::BackupVault'
+    Type: AWS::Backup::BackupVault
     Properties:
-      BackupVaultName: 'contoso-production-vault'
-      EncryptionKeyArn: !GetAtt BackupKey.Arn
-      LockConfiguration:
-        MinRetentionDays: 35
+      BackupVaultName: 'contoso-backup-vault'
+      EncryptionKeyArn: !GetAtt BackupVaultKey.Arn
 
-  BackupKey:
-    Type: 'AWS::KMS::Key'
+  # KMS key for backup encryption
+  BackupVaultKey:
+    Type: AWS::KMS::Key
     Properties:
-      Description: 'KMS key for backup encryption'
+      Description: 'KMS key for AWS Backup vault encryption'
       EnableKeyRotation: true
       KeyPolicy:
         Version: '2012-10-17'
         Statement:
-          - Sid: Enable IAM User Permissions
+          - Sid: Enable IAM policies
             Effect: Allow
             Principal:
               AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
@@ -30,63 +41,63 @@ Resources:
               Service: backup.amazonaws.com
             Action:
               - 'kms:CreateGrant'
-              - 'kms:GenerateDataKey'
+              - 'kms:DescribeKey'
               - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
             Resource: '*'
 
+  # Backup plan with operational + archival tiers
   BackupPlan:
-    Type: 'AWS::Backup::BackupPlan'
+    Type: AWS::Backup::BackupPlan
     Properties:
       BackupPlan:
-        BackupPlanName: 'contoso-production-plan'
+        BackupPlanName: 'contoso-backup-plan'
         BackupPlanRule:
-          - RuleName: 'DailyBackups'
+          - RuleName: 'daily-operational-backups'
             TargetBackupVault: !Ref BackupVault
             ScheduleExpression: 'cron(0 3 * * ? *)'
             StartWindowMinutes: 60
             CompletionWindowMinutes: 120
             Lifecycle:
-              DeleteAfterDays: 35
-              MoveToColdStorageAfterDays: 7
-          - RuleName: 'ArchivalBackups'
-            TargetBackupVault: !Ref BackupVault
-            ScheduleExpression: 'cron(0 4 ? * 1 *)'
-            StartWindowMinutes: 60
-            CompletionWindowMinutes: 180
-            Lifecycle:
-              DeleteAfterDays: 2555
+              DeleteAfterDays: !Ref OperationalRetentionDays
+            RecoveryPointTags:
+              retention-type: operational
             CopyActions:
-              - DestinationBackupVaultArn: !Sub 'arn:aws:backup:us-west-2:${AWS::AccountId}:backup-vault:contoso-dr-vault'
+              - DestinationBackupVaultArn: !Sub 'arn:aws:backup:us-west-2:${AWS::AccountId}:backup-vault:contoso-backup-vault-dr'
                 Lifecycle:
-                  DeleteAfterDays: 2555
+                  DeleteAfterDays: !Ref OperationalRetentionDays
+          - RuleName: 'monthly-archival-backups'
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 3 1 * ? *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              MoveToColdStorageAfterDays: 30
+              DeleteAfterDays: !Ref 'AWS::NoValue'
+            RecoveryPointTags:
+              retention-type: archival
+              retention-years: !Ref ArchivalRetentionYears
 
-  BackupSelection:
-    Type: 'AWS::Backup::BackupSelection'
+  # Backup selection for RDS databases
+  RDSBackupSelection:
+    Type: AWS::Backup::BackupSelection
     Properties:
       BackupPlanId: !Ref BackupPlan
       BackupSelection:
-        SelectionName: 'production-resources'
-        IamRoleArn: !GetAtt BackupRole.Arn
-        ListOfTags:
-          - ConditionType: STRINGEQUALS
-            ConditionKey: 'contoso:environment'
-            ConditionValue: 'production'
-
-  BackupRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: backup.amazonaws.com
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup'
-        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores'
+        SelectionName: 'rds-databases'
+        IamRoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-role/AWSBackupDefaultServiceRole'
+        Resources:
+          - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*'
+        Conditions:
+          StringEquals:
+            - ConditionKey: 'aws:ResourceTag/backup-enabled'
+              ConditionValue: 'true'
 
 Outputs:
   BackupVaultArn:
-    Description: 'Backup Vault ARN'
+    Description: 'ARN of the backup vault'
     Value: !GetAtt BackupVault.BackupVaultArn
+  
+  BackupPlanId:
+    Description: 'ID of the backup plan'
+    Value: !Ref BackupPlan
