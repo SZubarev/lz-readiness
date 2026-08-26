@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Systems Manager Patch Manager with automated patching for EC2 instances'
+
+Resources:
+  PatchBaseline:
+    Type: 'AWS::SSM::PatchBaseline'
+    Properties:
+      Name: 'contoso-production-baseline'
+      Description: 'Patch baseline for production EC2 instances'
+      OperatingSystem: WINDOWS
+      PatchGroups:
+        - 'production'
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - CriticalUpdates
+                    - SecurityUpdates
+                - Key: MSRC_SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Updates
+            ApproveAfterDays: 14
+            ComplianceLevel: HIGH
+
+  MaintenanceWindow:
+    Type: 'AWS::SSM::MaintenanceWindow'
+    Properties:
+      Name: 'contoso-production-patching'
+      Description: 'Automated patching for production instances'
+      Schedule: 'cron(0 2 ? * SUN *)'
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  MaintenanceWindowTarget:
+    Type: 'AWS::SSM::MaintenanceWindowTarget'
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+        - Key: 'tag:contoso:environment'
+          Values:
+            - production
+        - Key: 'tag:PatchGroup'
+          Values:
+            - production
+
+  MaintenanceWindowTask:
+    Type: 'AWS::SSM::MaintenanceWindowTask'
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      Targets:
+        - Key: WindowTargetIds
+          Values:
+            - !Ref MaintenanceWindowTarget
+      TaskArn: 'AWS-RunPatchBaseline'
+      ServiceRoleArn: !GetAtt MaintenanceWindowRole.Arn
+      TaskType: RUN_COMMAND
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          Parameters:
+            Operation:
+              - Install
+
+  MaintenanceWindowRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole'
+
+Outputs:
+  PatchBaselineId:
+    Description: 'Patch Baseline ID'
+    Value: !Ref PatchBaseline
