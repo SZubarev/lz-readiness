@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Configure AWS Systems Manager Patch Manager and Amazon Inspector'
+
+Resources:
+  PatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: contoso-production-patch-baseline
+      Description: 'Production patch baseline with critical and security updates'
+      OperatingSystem: AMAZON_LINUX_2023
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                    - Critical
+                - Key: SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+
+  MaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: contoso-production-patching-window
+      Description: 'Production patching window - Sunday 2AM EST'
+      Schedule: 'cron(0 2 ? * SUN *)'
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  MaintenanceWindowTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+        - Key: tag:contoso:environment
+          Values:
+            - prod
+
+  MaintenanceWindowTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      Targets:
+        - Key: WindowTargetIds
+          Values:
+            - !Ref MaintenanceWindowTarget
+      TaskArn: AWS-RunPatchBaseline
+      ServiceRoleArn: !GetAtt MaintenanceWindowRole.Arn
+      TaskType: RUN_COMMAND
+      Priority: 1
+      MaxConcurrency: '10%'
+      MaxErrors: '5%'
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          Parameters:
+            Operation:
+              - Install
+
+  MaintenanceWindowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole'
+
+Outputs:
+  PatchBaselineId:
+    Value: !Ref PatchBaseline
+    Export:
+      Name: !Sub '${AWS::StackName}-PatchBaselineId'

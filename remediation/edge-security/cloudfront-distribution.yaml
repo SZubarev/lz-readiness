@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFront distribution with S3 origin and WAF integration'
+
+Parameters:
+  OriginDomainName:
+    Type: String
+    Description: Origin domain name (ALB or S3)
+  WebACLArn:
+    Type: String
+    Description: ARN of the WAF WebACL
+
+Resources:
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        WebACLId: !Ref WebACLArn
+        Origins:
+          - Id: origin1
+            DomainName: !Ref OriginDomainName
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: origin1
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+          Compress: true
+          MinTTL: 0
+          DefaultTTL: 300
+          MaxTTL: 31536000
+
+Outputs:
+  DistributionId:
+    Value: !Ref CloudFrontDistribution
+  DomainName:
+    Value: !GetAtt CloudFrontDistribution.DomainName

@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Route 53 Resolver endpoints for hybrid DNS resolution'
+
+Parameters:
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for resolver endpoints
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for resolver endpoints (minimum 2)
+  OnPremDNSIPs:
+    Type: CommaDelimitedList
+    Description: On-premises DNS server IPs
+
+Resources:
+  ResolverSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for Route 53 Resolver endpoints'
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.0.0.0/8
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.0.0.0/8
+
+  OutboundEndpoint:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - SubnetId: !Select [0, !Ref SubnetIds]
+        - SubnetId: !Select [1, !Ref SubnetIds]
+      SecurityGroupIds:
+        - !Ref ResolverSecurityGroup
+
+  InboundEndpoint:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - SubnetId: !Select [0, !Ref SubnetIds]
+        - SubnetId: !Select [1, !Ref SubnetIds]
+      SecurityGroupIds:
+        - !Ref ResolverSecurityGroup
+
+  ForwardingRule:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: corp.contoso.internal
+      RuleType: FORWARD
+      ResolverEndpointId: !Ref OutboundEndpoint
+      TargetIps:
+        - Ip: !Select [0, !Ref OnPremDNSIPs]
+          Port: 53
+        - Ip: !Select [1, !Ref OnPremDNSIPs]
+          Port: 53
+
+Outputs:
+  OutboundEndpointId:
+    Value: !Ref OutboundEndpoint
+  InboundEndpointId:
+    Value: !Ref InboundEndpoint

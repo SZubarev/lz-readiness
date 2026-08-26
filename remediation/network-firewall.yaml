@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Network Firewall for centralized traffic inspection'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for firewall deployment
+  FirewallSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet IDs for firewall endpoints (3 AZs)
+
+Resources:
+  FirewallRuleGroup:
+    Type: AWS::NetworkFirewall::RuleGroup
+    Properties:
+      RuleGroupName: contoso-inspection-rules
+      Type: STATEFUL
+      Capacity: 1000
+      RuleGroup:
+        RulesSource:
+          StatefulRules:
+            - Action: ALERT
+              Header:
+                Protocol: TCP
+                Source: ANY
+                SourcePort: ANY
+                Direction: FORWARD
+                Destination: ANY
+                DestinationPort: '22'
+              RuleOptions:
+                - Keyword: msg
+                  Settings: ['SSH traffic detected']
+
+  FirewallPolicy:
+    Type: AWS::NetworkFirewall::FirewallPolicy
+    Properties:
+      FirewallPolicyName: contoso-firewall-policy
+      FirewallPolicy:
+        StatelessDefaultActions: ['aws:forward_to_sfe']
+        StatelessFragmentDefaultActions: ['aws:forward_to_sfe']
+        StatefulRuleGroupReferences:
+          - ResourceArn: !Ref FirewallRuleGroup
+
+  NetworkFirewall:
+    Type: AWS::NetworkFirewall::Firewall
+    Properties:
+      FirewallName: contoso-network-firewall
+      VpcId: !Ref VpcId
+      SubnetMappings:
+        - SubnetId: !Select [0, !Ref FirewallSubnetIds]
+        - SubnetId: !Select [1, !Ref FirewallSubnetIds]
+        - SubnetId: !Select [2, !Ref FirewallSubnetIds]
+      FirewallPolicyArn: !Ref FirewallPolicy
+
+  FirewallLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/network-firewall/contoso
+      RetentionInDays: 90
+
+  FirewallLogging:
+    Type: AWS::NetworkFirewall::LoggingConfiguration
+    Properties:
+      FirewallArn: !Ref NetworkFirewall
+      LoggingConfiguration:
+        LogDestinationConfigs:
+          - LogType: ALERT
+            LogDestinationType: CloudWatchLogs
+            LogDestination:
+              logGroup: !Ref FirewallLogGroup
+
+Outputs:
+  FirewallId:
+    Value: !Ref NetworkFirewall
+  FirewallArn:
+    Value: !GetAtt NetworkFirewall.FirewallArn

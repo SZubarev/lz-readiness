@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Macie for automated PII detection in S3'
+
+Resources:
+  MacieSession:
+    Type: AWS::Macie::Session
+    Properties:
+      Status: ENABLED
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  CustomDataIdentifier:
+    Type: AWS::Macie::CustomDataIdentifier
+    Properties:
+      Name: CustomCreditCardPattern
+      Description: 'Detects credit card numbers'
+      Regex: '\\b(?:\\d{4}[- ]?){3}\\d{4}\\b'
+      MaximumMatchDistance: 10
+
+  ClassificationJob:
+    Type: AWS::Macie::FindingsFilter
+    Properties:
+      Name: !Sub '${AWS::StackName}-filter'
+      Description: 'Filter for PII findings'
+      Action: ARCHIVE
+      FindingCriteria:
+        Criterion:
+          'severity.description':
+            eq:
+              - Low
+
+Outputs:
+  MacieServiceRole:
+    Value: !GetAtt MacieSession.ServiceRole

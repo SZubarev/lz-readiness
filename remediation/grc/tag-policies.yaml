@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Organizations Tag Policies for enforcement'
+
+Resources:
+  TagPolicy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: MandatoryTagsPolicy
+      Description: 'Enforces mandatory tags on resources'
+      Type: TAG_POLICY
+      Content:
+        tags:
+          environment:
+            tag_key:
+              @@assign: environment
+            tag_value:
+              @@assign:
+                - production
+                - staging
+                - development
+            enforced_for:
+              @@assign:
+                - 'ec2:instance'
+                - 'rds:db'
+                - 's3:bucket'
+          cost-center:
+            tag_key:
+              @@assign: cost-center
+            enforced_for:
+              @@assign:
+                - 'ec2:instance'
+                - 'rds:db'
+                - 's3:bucket'
+          business-unit:
+            tag_key:
+              @@assign: business-unit
+            enforced_for:
+              @@assign:
+                - 'ec2:instance'
+                - 'rds:db'
+
+Outputs:
+  PolicyId:
+    Value: !Ref TagPolicy

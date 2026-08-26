@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enable AWS Macie for automated PII detection and classification'
+
+Resources:
+  MacieSession:
+    Type: AWS::Macie::Session
+    Properties:
+      Status: ENABLED
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  MacieCustomDataIdentifier:
+    Type: AWS::Macie::CustomDataIdentifier
+    Properties:
+      Name: contoso-ssn-pattern
+      Description: 'Custom identifier for Social Security Numbers'
+      Regex: '\b\d{3}-\d{2}-\d{4}\b'
+      MaximumMatchDistance: 50
+
+  MacieClassificationJob:
+    Type: AWS::Macie::FindingsFilter
+    Properties:
+      Name: contoso-pii-findings-filter
+      Description: 'Filter for PII findings in production S3 buckets'
+      FindingCriteria:
+        Criterion:
+          'severity.description':
+            eq:
+              - High
+              - Critical
+          'category':
+            eq:
+              - CLASSIFICATION
+      Action: ARCHIVE
+
+  MacieFindingsSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: contoso-macie-findings
+      DisplayName: 'Contoso Macie PII Findings'
+      Subscription:
+        - Endpoint: security@contoso.com
+          Protocol: email
+
+  MacieFindingsEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: contoso-macie-findings-rule
+      Description: 'Route Macie findings to SNS'
+      EventPattern:
+        source:
+          - aws.macie
+        detail-type:
+          - 'Macie Finding'
+        detail:
+          severity:
+            description:
+              - High
+              - Critical
+      State: ENABLED
+      Targets:
+        - Arn: !Ref MacieFindingsSNSTopic
+          Id: MacieFindingsTarget
+
+  MacieFindingsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref MacieFindingsSNSTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: 'sns:Publish'
+            Resource: !Ref MacieFindingsSNSTopic
+
+Outputs:
+  MacieSessionArn:
+    Value: !GetAtt MacieSession.ServiceRole
+    Export:
+      Name: !Sub '${AWS::StackName}-MacieSessionArn'
+  FindingsSNSTopicArn:
+    Value: !Ref MacieFindingsSNSTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-FindingsSNSTopicArn'

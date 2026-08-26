@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Backup with centralized policies for RDS and EBS'
+
+Resources:
+  BackupVault:
+    Type: 'AWS::Backup::BackupVault'
+    Properties:
+      BackupVaultName: 'contoso-production-vault'
+      EncryptionKeyArn: !GetAtt BackupKey.Arn
+      LockConfiguration:
+        MinRetentionDays: 35
+
+  BackupKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: 'KMS key for backup encryption'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow AWS Backup
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - 'kms:CreateGrant'
+              - 'kms:GenerateDataKey'
+              - 'kms:Decrypt'
+            Resource: '*'
+
+  BackupPlan:
+    Type: 'AWS::Backup::BackupPlan'
+    Properties:
+      BackupPlan:
+        BackupPlanName: 'contoso-production-plan'
+        BackupPlanRule:
+          - RuleName: 'DailyBackups'
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 3 * * ? *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 35
+              MoveToColdStorageAfterDays: 7
+          - RuleName: 'ArchivalBackups'
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 4 ? * 1 *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 2555
+            CopyActions:
+              - DestinationBackupVaultArn: !Sub 'arn:aws:backup:us-west-2:${AWS::AccountId}:backup-vault:contoso-dr-vault'
+                Lifecycle:
+                  DeleteAfterDays: 2555
+
+  BackupSelection:
+    Type: 'AWS::Backup::BackupSelection'
+    Properties:
+      BackupPlanId: !Ref BackupPlan
+      BackupSelection:
+        SelectionName: 'production-resources'
+        IamRoleArn: !GetAtt BackupRole.Arn
+        ListOfTags:
+          - ConditionType: STRINGEQUALS
+            ConditionKey: 'contoso:environment'
+            ConditionValue: 'production'
+
+  BackupRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup'
+        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores'
+
+Outputs:
+  BackupVaultArn:
+    Description: 'Backup Vault ARN'
+    Value: !GetAtt BackupVault.BackupVaultArn

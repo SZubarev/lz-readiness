@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Data de-identification using AWS Glue DataBrew for non-production environments'
+
+Parameters:
+  SourceBucket:
+    Type: String
+    Description: S3 bucket containing production data
+  
+  DestinationBucket:
+    Type: String
+    Description: S3 bucket for de-identified data
+
+Resources:
+  DataBrewServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: databrew.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueDataBrewServiceRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${SourceBucket}/*'
+                  - !Sub 'arn:aws:s3:::${DestinationBucket}/*'
+
+  PIIDataset:
+    Type: AWS::DataBrew::Dataset
+    Properties:
+      Name: !Sub '${AWS::StackName}-pii-dataset'
+      Input:
+        S3InputDefinition:
+          Bucket: !Ref SourceBucket
+          Key: 'production-data/'
+
+  DeidentificationRecipe:
+    Type: AWS::DataBrew::Recipe
+    Properties:
+      Name: !Sub '${AWS::StackName}-deidentify-recipe'
+      Steps:
+        - Action:
+            Operation: DELETE_DUPLICATE_ROWS
+        - Action:
+            Operation: MASK
+            Parameters:
+              sourceColumn: ssn
+              maskValue: 'XXX-XX-XXXX'
+        - Action:
+            Operation: MASK
+            Parameters:
+              sourceColumn: email
+              maskValue: 'masked@example.com'
+        - Action:
+            Operation: CRYPTOGRAPHIC_HASH
+            Parameters:
+              sourceColumn: customer_id
+              algorithm: SHA256
+
+  DeidentificationJob:
+    Type: AWS::DataBrew::Job
+    Properties:
+      Name: !Sub '${AWS::StackName}-deidentify-job'
+      Type: RECIPE
+      DatasetName: !Ref PIIDataset
+      RecipeReference:
+        Name: !Ref DeidentificationRecipe
+      RoleArn: !GetAtt DataBrewServiceRole.Arn
+      Outputs:
+        - Location:
+            Bucket: !Ref DestinationBucket
+            Key: 'deidentified-data/'
+          Format: CSV
+      MaxRetries: 3
+
+Outputs:
+  JobName:
+    Value: !Ref DeidentificationJob
+  RecipeName:
+    Value: !Ref DeidentificationRecipe

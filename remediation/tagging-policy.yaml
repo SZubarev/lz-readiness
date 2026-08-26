@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Tag Policy for enforcing mandatory tags'
+
+Resources:
+  TagPolicy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: ContosoMandatoryTags
+      Description: Enforces 7 mandatory tags across all resources
+      Type: TAG_POLICY
+      Content: |
+        {
+          "tags": {
+            "contoso:environment": {
+              "tag_key": {
+                "@@assign": "contoso:environment"
+              },
+              "tag_value": {
+                "@@assign": ["dev", "staging", "prod", "sandbox"]
+              },
+              "enforced_for": {
+                "@@assign": ["ec2:instance", "rds:db", "s3:bucket"]
+              }
+            },
+            "contoso:business-unit": {
+              "tag_key": {
+                "@@assign": "contoso:business-unit"
+              },
+              "enforced_for": {
+                "@@assign": ["ec2:instance", "rds:db", "s3:bucket"]
+              }
+            },
+            "contoso:application-id": {
+              "tag_key": {
+                "@@assign": "contoso:application-id"
+              },
+              "enforced_for": {
+                "@@assign": ["ec2:instance", "rds:db", "s3:bucket"]
+              }
+            },
+            "contoso:cost-center": {
+              "tag_key": {
+                "@@assign": "contoso:cost-center"
+              },
+              "enforced_for": {
+                "@@assign": ["ec2:instance", "rds:db", "s3:bucket"]
+              }
+            },
+            "contoso:data-classification": {
+              "tag_key": {
+                "@@assign": "contoso:data-classification"
+              },
+              "tag_value": {
+                "@@assign": ["confidential", "internal", "public"]
+              },
+              "enforced_for": {
+                "@@assign": ["ec2:instance", "rds:db", "s3:bucket"]
+              }
+            },
+            "contoso:owner": {
+              "tag_key": {
+                "@@assign": "contoso:owner"
+              },
+              "enforced_for": {
+                "@@assign": ["ec2:instance", "rds:db", "s3:bucket"]
+              }
+            }
+          }
+        }
+
+Outputs:
+  TagPolicyId:
+    Value: !Ref TagPolicy

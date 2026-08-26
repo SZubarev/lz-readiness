@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enable AWS Cost Anomaly Detection with alerting'
+
+Resources:
+  CostAnomalyMonitor:
+    Type: AWS::CE::AnomalyMonitor
+    Properties:
+      MonitorName: contoso-org-wide-monitor
+      MonitorType: DIMENSIONAL
+      MonitorDimension: SERVICE
+
+  CostAnomalySubscription:
+    Type: AWS::CE::AnomalySubscription
+    Properties:
+      SubscriptionName: contoso-cost-anomaly-alerts
+      MonitorArnList:
+        - !GetAtt CostAnomalyMonitor.MonitorArn
+      Subscribers:
+        - Type: SNS
+          Address: !Ref CostAnomalySNSTopic
+      Frequency: DAILY
+      Threshold: 100.0
+
+  CostAnomalySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: contoso-cost-anomaly-alerts
+      DisplayName: 'Contoso Cost Anomaly Alerts'
+      Subscription:
+        - Endpoint: finops@contoso.com
+          Protocol: email
+
+  CostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: contoso-monthly-budget
+        BudgetLimit:
+          Amount: 500000
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: finops@contoso.com
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: cfo@contoso.com
+
+Outputs:
+  MonitorArn:
+    Value: !GetAtt CostAnomalyMonitor.MonitorArn
+    Export:
+      Name: !Sub '${AWS::StackName}-MonitorArn'
+  SNSTopicArn:
+    Value: !Ref CostAnomalySNSTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SNSTopicArn'
