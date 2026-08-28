@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Backup for automated RDS and EBS backups with cross-region replication'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+  SecondaryRegion:
+    Type: String
+    Default: us-west-2
+    Description: DR region for cross-region backup copy
+
+Resources:
+  # Backup Vault with lock for immutability
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Sub '${Environment}-backup-vault'
+      EncryptionKeyArn: !GetAtt BackupKMSKey.Arn
+      LockConfiguration:
+        MinRetentionDays: 35
+
+  # KMS Key for backup encryption
+  BackupKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for AWS Backup encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow AWS Backup
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:CreateGrant
+              - kms:DescribeKey
+            Resource: '*'
+
+  # Backup Plan
+  BackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub '${Environment}-backup-plan'
+        BackupPlanRule:
+          - RuleName: DailyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 5 ? * * *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 35
+              MoveToColdStorageAfterDays: 30
+            CopyActions:
+              - DestinationBackupVaultArn: !Sub 'arn:aws:backup:${SecondaryRegion}:${AWS::AccountId}:backup-vault/${Environment}-backup-vault-dr'
+                Lifecycle:
+                  DeleteAfterDays: 35
+          - RuleName: WeeklyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 3 ? * SUN *)'
+            Lifecycle:
+              DeleteAfterDays: 2555
+              MoveToColdStorageAfterDays: 90
+
+  # Backup Selection - RDS
+  BackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref BackupPlan
+      BackupSelection:
+        SelectionName: !Sub '${Environment}-rds-selection'
+        IamRoleArn: !GetAtt BackupRole.Arn
+        Resources:
+          - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*'
+        Conditions:
+          StringEquals:
+            - ConditionKey: 'aws:ResourceTag/Environment'
+              ConditionValue: !Ref Environment
+
+  # IAM Role for AWS Backup
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+Outputs:
+  BackupVaultArn:
+    Value: !GetAtt BackupVault.BackupVaultArn
+  BackupPlanId:
+    Value: !Ref BackupPlan

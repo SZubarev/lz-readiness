@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GuardDuty and Security Hub for threat detection and security monitoring'
+
+Resources:
+  # GuardDuty Detector
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      DataSources:
+        S3Logs:
+          Enable: true
+        Kubernetes:
+          AuditLogs:
+            Enable: true
+
+  # Security Hub
+  SecurityHub:
+    Type: AWS::SecurityHub::Hub
+    Properties:
+      ControlFindingGenerator: SECURITY_CONTROL
+      EnableDefaultStandards: true
+
+  # SNS Topic for security alerts
+  SecurityAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: security-alerts
+      DisplayName: Security Alerts from GuardDuty and Security Hub
+
+  # EventBridge Rule for High/Critical GuardDuty findings
+  GuardDutyEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: guardduty-high-severity-alerts
+      Description: Alert on high and critical severity GuardDuty findings
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Finding
+        detail:
+          severity:
+            - 7
+            - 8
+            - 9
+      State: ENABLED
+      Targets:
+        - Arn: !Ref SecurityAlertTopic
+          Id: SecurityAlertSNS
+
+  # EventBridge Rule for Security Hub findings
+  SecurityHubEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: securityhub-critical-findings
+      Description: Alert on critical Security Hub findings
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+        detail:
+          findings:
+            Severity:
+              Label:
+                - CRITICAL
+      State: ENABLED
+      Targets:
+        - Arn: !Ref SecurityAlertTopic
+          Id: SecurityAlertSNS
+
+  # SNS Topic Policy
+  SecurityAlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SecurityAlertTopic
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SecurityAlertTopic
+
+Outputs:
+  GuardDutyDetectorId:
+    Value: !Ref GuardDutyDetector
+  SecurityHubArn:
+    Value: !Ref SecurityHub
+  SecurityAlertTopicArn:
+    Value: !Ref SecurityAlertTopic

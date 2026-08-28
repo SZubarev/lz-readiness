@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SSM Patch Manager baseline and maintenance windows for automated patching'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, staging, dev]
+
+Resources:
+  # Windows Patch Baseline
+  WindowsPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Sub '${Environment}-windows-patch-baseline'
+      Description: Patch baseline for Windows servers - Critical and Important patches
+      OperatingSystem: WINDOWS
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values: [CriticalUpdates, SecurityUpdates]
+                - Key: MSRC_SEVERITY
+                  Values: [Critical, Important]
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Linux Patch Baseline
+  LinuxPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Sub '${Environment}-linux-patch-baseline'
+      Description: Patch baseline for Linux servers - Security patches
+      OperatingSystem: AMAZON_LINUX_2
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values: [Security]
+                - Key: SEVERITY
+                  Values: [Critical, Important]
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+
+  # Maintenance Window
+  PatchMaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: !Sub '${Environment}-patch-maintenance-window'
+      Description: !Sub 'Maintenance window for ${Environment} patching'
+      Schedule: !If
+        - IsProduction
+        - 'cron(0 2 ? * SUN *)'
+        - 'cron(0 2 ? * WED *)'
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  # Maintenance Window Target
+  PatchMaintenanceWindowTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
+    Properties:
+      WindowId: !Ref PatchMaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+        - Key: tag:Environment
+          Values:
+            - !Ref Environment
+
+  # Maintenance Window Task - Patch
+  PatchMaintenanceWindowTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      WindowId: !Ref PatchMaintenanceWindow
+      Targets:
+        - Key: WindowTargetIds
+          Values:
+            - !Ref PatchMaintenanceWindowTarget
+      TaskType: RUN_COMMAND
+      ServiceRoleArn: !GetAtt MaintenanceWindowRole.Arn
+      TaskArn: AWS-RunPatchBaseline
+      Priority: 1
+      MaxConcurrency: '25%'
+      MaxErrors: '10%'
+
+  # IAM Role for Maintenance Window
+  MaintenanceWindowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Outputs:
+  WindowsPatchBaselineId:
+    Value: !Ref WindowsPatchBaseline
+  LinuxPatchBaselineId:
+    Value: !Ref LinuxPatchBaseline
