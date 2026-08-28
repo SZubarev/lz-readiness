@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Systems Manager Patch Manager baseline configuration
+
+Resources:
+  PatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: production-patch-baseline
+      Description: Patch baseline for production servers
+      OperatingSystem: AMAZON_LINUX_2
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                    - Bugfix
+                - Key: SEVERITY
+                  Values:
+                    - Critical
+                    - Important
+            ComplianceLevel: CRITICAL
+            ApproveAfterDays: 7
+            EnableNonSecurity: false
+
+  MaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: production-patching-window
+      Description: Weekly patching maintenance window
+      Schedule: cron(0 2 ? * SUN *)
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  PatchTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      WindowId: !Ref MaintenanceWindow
+      TaskType: RUN_COMMAND
+      TaskArn: AWS-RunPatchBaseline
+      Priority: 1
+      MaxConcurrency: '20%'
+      MaxErrors: '10%'
+      Targets:
+        - Key: tag:Environment
+          Values:
+            - production
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          Parameters:
+            Operation:
+              - Install
+
+Outputs:
+  PatchBaselineId:
+    Description: Patch Baseline ID
+    Value: !Ref PatchBaseline
+  MaintenanceWindowId:
+    Description: Maintenance Window ID
+    Value: !Ref MaintenanceWindow
