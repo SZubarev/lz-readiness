@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC Flow Logs with centralized logging and 7-year retention'
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID to enable flow logs
+  Environment:
+    Type: String
+    Default: production
+
+Resources:
+  # S3 Bucket for Flow Logs (7-year retention)
+  FlowLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'vpc-flow-logs-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt FlowLogsKMSKey.Arn
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveOldLogs
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER_IR
+              - TransitionInDays: 180
+                StorageClass: DEEP_ARCHIVE
+            ExpirationInDays: 2555
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # KMS Key for encryption
+  FlowLogsKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for VPC Flow Logs encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow VPC Flow Logs
+            Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+
+  # VPC Flow Logs to S3
+  VPCFlowLogToS3:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceIds:
+        - !Ref VpcId
+      TrafficType: ALL
+      LogDestinationType: s3
+      LogDestination: !GetAtt FlowLogsBucket.Arn
+      LogFormat: '${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} ${packets} ${bytes} ${start} ${end} ${action} ${log-status}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group for Flow Logs (90-day retention)
+  FlowLogsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpc/flowlogs/${VpcId}'
+      RetentionInDays: 90
+
+  # VPC Flow Logs to CloudWatch
+  VPCFlowLogToCloudWatch:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceIds:
+        - !Ref VpcId
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogsLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
+
+  # IAM Role for CloudWatch Logs
+  FlowLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt FlowLogsLogGroup.Arn
+
+Outputs:
+  FlowLogsBucketName:
+    Value: !Ref FlowLogsBucket

@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cost management with AWS Budgets and Cost Anomaly Detection'
+
+Parameters:
+  MonthlyBudgetLimit:
+    Type: Number
+    Default: 50000
+    Description: Monthly budget limit in USD
+  AlertEmail:
+    Type: String
+    Description: Email address for budget alerts
+
+Resources:
+  # SNS Topic for budget alerts
+  BudgetAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cost-budget-alerts
+      DisplayName: Cost Budget Alerts
+      Subscription:
+        - Endpoint: !Ref AlertEmail
+          Protocol: email
+
+  # Monthly Budget
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: monthly-account-budget
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetLimit
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+        CostFilters: {}
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+
+  # Cost Anomaly Detector
+  CostAnomalyDetector:
+    Type: AWS::CE::AnomalyMonitor
+    Properties:
+      MonitorName: account-anomaly-monitor
+      MonitorType: DIMENSIONAL
+      MonitorDimension: SERVICE
+
+  # Cost Anomaly Subscription
+  CostAnomalySubscription:
+    Type: AWS::CE::AnomalySubscription
+    Properties:
+      SubscriptionName: cost-anomaly-alerts
+      Threshold: 100
+      Frequency: IMMEDIATE
+      MonitorArnList:
+        - !GetAtt CostAnomalyDetector.MonitorArn
+      Subscribers:
+        - Type: SNS
+          Address: !Ref BudgetAlertTopic
+
+  # Savings Plan Budget
+  SavingsPlanBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: savings-plan-utilization
+        BudgetLimit:
+          Amount: 95
+          Unit: PERCENT
+        TimeUnit: MONTHLY
+        BudgetType: SAVINGS_PLANS_UTILIZATION
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: LESS_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+
+Outputs:
+  BudgetAlertTopicArn:
+    Value: !Ref BudgetAlertTopic
+    Description: SNS topic for budget alerts
