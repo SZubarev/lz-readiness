@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Enable GuardDuty for threat detection across the organization
+
+Resources:
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      DataSources:
+        S3Logs:
+          Enable: true
+        Kubernetes:
+          AuditLogs:
+            Enable: true
+        MalwareProtection:
+          ScanEc2InstanceWithFindings:
+            EbsVolumes:
+              Enable: true
+
+  GuardDutyPublisher:
+    Type: AWS::GuardDuty::PublishingDestination
+    Properties:
+      DetectorId: !Ref GuardDutyDetector
+      DestinationType: S3
+      DestinationProperties:
+        DestinationArn: !GetAtt GuardDutyFindingsBucket.Arn
+        KmsKeyArn: !GetAtt GuardDutyKmsKey.Arn
+
+  GuardDutyFindingsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'guardduty-findings-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref GuardDutyKmsKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  GuardDutyKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for GuardDuty findings encryption
+      KeyPolicy:
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow GuardDuty
+            Effect: Allow
+            Principal:
+              Service: guardduty.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey'
+              - 'kms:Decrypt'
+            Resource: '*'
+
+Outputs:
+  DetectorId:
+    Description: GuardDuty Detector ID
+    Value: !Ref GuardDutyDetector
+    Export:
+      Name: !Sub '${AWS::StackName}-DetectorId'
