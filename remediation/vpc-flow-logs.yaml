@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC Flow Logs centralized logging for Landing Zone'
+
+Parameters:
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: 'VPC ID to enable Flow Logs'
+  LogDestinationBucket:
+    Type: String
+    Description: 'S3 bucket for Flow Logs (format: arn:aws:s3:::bucket-name)'
+
+Resources:
+  # CloudWatch Logs group for Flow Logs
+  FlowLogsGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/vpc/flowlogs/${VpcId}'
+      RetentionInDays: 90
+
+  # IAM role for Flow Logs to CloudWatch
+  FlowLogsRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'vpc-flow-logs.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'CloudWatchLogsPush'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogGroups'
+                  - 'logs:DescribeLogStreams'
+                Resource: !GetAtt FlowLogsGroup.Arn
+
+  # VPC Flow Logs to CloudWatch
+  VPCFlowLog:
+    Type: 'AWS::EC2::FlowLog'
+    Properties:
+      ResourceType: 'VPC'
+      ResourceId: !Ref VpcId
+      TrafficType: 'ALL'
+      LogDestinationType: 'cloud-watch-logs'
+      LogGroupName: !Ref FlowLogsGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
+      Tags:
+        - Key: 'contoso:environment'
+          Value: 'shared'
+        - Key: 'contoso:owner'
+          Value: 'platform-engineering'
+
+Outputs:
+  FlowLogId:
+    Description: 'Flow Log ID'
+    Value: !Ref VPCFlowLog
+  LogGroupName:
+    Description: 'CloudWatch Logs group name'
+    Value: !Ref FlowLogsGroup

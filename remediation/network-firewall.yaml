@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Network Firewall for centralized inspection in Landing Zone'
+
+Parameters:
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: 'VPC ID for Network Firewall deployment'
+  FirewallSubnetIds:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: 'Subnet IDs for firewall endpoints (minimum 2 AZs)'
+
+Resources:
+  # Firewall rule group for stateful inspection
+  StatefulRuleGroup:
+    Type: 'AWS::NetworkFirewall::RuleGroup'
+    Properties:
+      RuleGroupName: 'stateful-inspection-rules'
+      Type: 'STATEFUL'
+      Capacity: 100
+      RuleGroup:
+        RulesSource:
+          StatefulRules:
+            - Action: 'DROP'
+              Header:
+                Protocol: 'TCP'
+                Source: 'ANY'
+                SourcePort: 'ANY'
+                Direction: 'FORWARD'
+                Destination: 'ANY'
+                DestinationPort: '22'
+              RuleOptions:
+                - Keyword: 'msg'
+                  Settings:
+                    - 'Block SSH from internet'
+
+  # Firewall policy
+  FirewallPolicy:
+    Type: 'AWS::NetworkFirewall::FirewallPolicy'
+    Properties:
+      FirewallPolicyName: 'inspection-policy'
+      FirewallPolicy:
+        StatelessDefaultActions:
+          - 'aws:forward_to_sfe'
+        StatelessFragmentDefaultActions:
+          - 'aws:forward_to_sfe'
+        StatefulRuleGroupReferences:
+          - ResourceArn: !Ref StatefulRuleGroup
+
+  # Network Firewall
+  NetworkFirewall:
+    Type: 'AWS::NetworkFirewall::Firewall'
+    Properties:
+      FirewallName: 'central-inspection-firewall'
+      VpcId: !Ref VpcId
+      SubnetMappings:
+        - SubnetId: !Select [0, !Ref FirewallSubnetIds]
+        - SubnetId: !Select [1, !Ref FirewallSubnetIds]
+      FirewallPolicyArn: !Ref FirewallPolicy
+      Tags:
+        - Key: 'contoso:environment'
+          Value: 'shared'
+        - Key: 'contoso:owner'
+          Value: 'platform-engineering'
+
+  # CloudWatch log group for firewall logs
+  FirewallLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: '/aws/networkfirewall/central-inspection'
+      RetentionInDays: 90
+
+  # Firewall logging configuration
+  LoggingConfiguration:
+    Type: 'AWS::NetworkFirewall::LoggingConfiguration'
+    Properties:
+      FirewallArn: !Ref NetworkFirewall
+      LoggingConfiguration:
+        LogDestinationConfigs:
+          - LogType: 'FLOW'
+            LogDestinationType: 'CloudWatchLogs'
+            LogDestination:
+              logGroup: !Ref FirewallLogGroup
+          - LogType: 'ALERT'
+            LogDestinationType: 'CloudWatchLogs'
+            LogDestination:
+              logGroup: !Ref FirewallLogGroup
+
+Outputs:
+  FirewallId:
+    Description: 'Network Firewall ID'
+    Value: !Ref NetworkFirewall
+  FirewallArn:
+    Description: 'Network Firewall ARN'
+    Value: !Ref NetworkFirewall
+  LogGroupName:
+    Description: 'CloudWatch Logs group name'
+    Value: !Ref FirewallLogGroup
