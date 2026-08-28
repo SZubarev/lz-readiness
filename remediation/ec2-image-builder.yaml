@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 Image Builder golden AMI pipeline with security scanning'
+
+Parameters:
+  BaseAMI:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+    Description: 'Base AMI for golden image'
+
+Resources:
+  # S3 bucket for Image Builder artifacts
+  ImageBuilderBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Image Builder component for security hardening
+  SecurityHardeningComponent:
+    Type: 'AWS::ImageBuilder::Component'
+    Properties:
+      Name: 'security-hardening'
+      Platform: 'Linux'
+      Version: '1.0.0'
+      Data: |
+        name: Security Hardening
+        description: CIS Benchmark security hardening
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: UpdateOS
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - 'sudo yum update -y'
+              - name: InstallInspectorAgent
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - 'wget https://inspector-agent.amazonaws.com/linux/latest/install'
+                    - 'sudo bash install'
+
+  # Image recipe
+  GoldenAMIRecipe:
+    Type: 'AWS::ImageBuilder::ImageRecipe'
+    Properties:
+      Name: 'golden-ami-amazonlinux2'
+      Version: '1.0.0'
+      ParentImage: !Ref BaseAMI
+      Components:
+        - ComponentArn: !Ref SecurityHardeningComponent
+      BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            VolumeSize: 20
+            VolumeType: 'gp3'
+            Encrypted: true
+            DeleteOnTermination: true
+
+  # Distribution configuration
+  DistributionConfig:
+    Type: 'AWS::ImageBuilder::DistributionConfiguration'
+    Properties:
+      Name: 'golden-ami-distribution'
+      Distributions:
+        - Region: !Ref 'AWS::Region'
+          AmiDistributionConfiguration:
+            Name: 'golden-ami-{{ imagebuilder:buildDate }}'
+            AmiTags:
+              'contoso:image-type': 'golden-ami'
+              'contoso:os': 'amazonlinux2'
+
+  # Image pipeline
+  ImagePipeline:
+    Type: 'AWS::ImageBuilder::ImagePipeline'
+    Properties:
+      Name: 'golden-ami-pipeline'
+      ImageRecipeArn: !Ref GoldenAMIRecipe
+      DistributionConfigurationArn: !Ref DistributionConfig
+      Schedule:
+        ScheduleExpression: 'cron(0 0 * * SUN)'
+        PipelineExecutionStartCondition: 'EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE'
+
+Outputs:
+  PipelineArn:
+    Description: 'Image Builder pipeline ARN'
+    Value: !Ref ImagePipeline
+  BucketName:
+    Description: 'S3 bucket for artifacts'
+    Value: !Ref ImageBuilderBucket

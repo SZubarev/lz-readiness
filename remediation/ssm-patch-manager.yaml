@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Systems Manager Patch Manager automation for Landing Zone'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues:
+      - 'development'
+      - 'staging'
+      - 'production'
+    Description: 'Environment for patch management'
+
+Resources:
+  # Patch baseline for Amazon Linux 2
+  AmazonLinuxPatchBaseline:
+    Type: 'AWS::SSM::PatchBaseline'
+    Properties:
+      Name: !Sub 'AmazonLinux2-${Environment}-Baseline'
+      Description: 'Patch baseline for Amazon Linux 2'
+      OperatingSystem: 'AMAZON_LINUX_2'
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: 'CLASSIFICATION'
+                  Values:
+                    - 'Security'
+                    - 'Bugfix'
+                - Key: 'SEVERITY'
+                  Values:
+                    - 'Critical'
+                    - 'Important'
+            ApproveAfterDays: 7
+            ComplianceLevel: 'CRITICAL'
+
+  # Maintenance window for patching
+  PatchMaintenanceWindow:
+    Type: 'AWS::SSM::MaintenanceWindow'
+    Properties:
+      Name: !Sub '${Environment}-patch-window'
+      Description: 'Maintenance window for automated patching'
+      Schedule: 'cron(0 2 ? * SUN *)'
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+
+  # Maintenance window target
+  PatchTarget:
+    Type: 'AWS::SSM::MaintenanceWindowTarget'
+    Properties:
+      WindowId: !Ref PatchMaintenanceWindow
+      ResourceType: 'INSTANCE'
+      Targets:
+        - Key: 'tag:contoso:environment'
+          Values:
+            - !Ref Environment
+        - Key: 'tag:SSM-Managed'
+          Values:
+            - 'true'
+
+  # Patch task
+  PatchTask:
+    Type: 'AWS::SSM::MaintenanceWindowTask'
+    Properties:
+      WindowId: !Ref PatchMaintenanceWindow
+      Targets:
+        - Key: 'WindowTargetIds'
+          Values:
+            - !Ref PatchTarget
+      TaskArn: 'AWS-RunPatchBaseline'
+      TaskType: 'RUN_COMMAND'
+      Priority: 1
+      MaxConcurrency: '10%'
+      MaxErrors: '5%'
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          Parameters:
+            Operation:
+              - 'Install'
+
+Outputs:
+  PatchBaselineId:
+    Description: 'Patch baseline ID'
+    Value: !Ref AmazonLinuxPatchBaseline
+  MaintenanceWindowId:
+    Description: 'Maintenance window ID'
+    Value: !Ref PatchMaintenanceWindow
