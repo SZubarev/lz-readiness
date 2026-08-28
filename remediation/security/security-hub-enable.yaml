@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Enable AWS Security Hub with compliance standards
+
+Resources:
+  SecurityHub:
+    Type: AWS::SecurityHub::Hub
+    Properties:
+      ControlFindingGenerator: SECURITY_CONTROL
+      EnableDefaultStandards: false
+
+  CISStandard:
+    Type: AWS::SecurityHub::Standard
+    DependsOn: SecurityHub
+    Properties:
+      StandardsArn: !Sub 'arn:aws:securityhub:${AWS::Region}::standards/cis-aws-foundations-benchmark/v/1.4.0'
+
+  PCIDSSStandard:
+    Type: AWS::SecurityHub::Standard
+    DependsOn: SecurityHub
+    Properties:
+      StandardsArn: !Sub 'arn:aws:securityhub:${AWS::Region}::standards/pci-dss/v/3.2.1'
+
+  SecurityHubSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: securityhub-findings
+      DisplayName: Security Hub Findings
+
+  SecurityHubEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: securityhub-critical-findings
+      Description: Route critical Security Hub findings to SNS
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+        detail:
+          findings:
+            Severity:
+              Label:
+                - CRITICAL
+                - HIGH
+      State: ENABLED
+      Targets:
+        - Arn: !Ref SecurityHubSNSTopic
+          Id: SecurityHubSNS
+
+Outputs:
+  SecurityHubArn:
+    Description: Security Hub ARN
+    Value: !Ref SecurityHub
+  SNSTopicArn:
+    Description: SNS Topic for findings
+    Value: !Ref SecurityHubSNSTopic

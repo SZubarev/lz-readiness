@@ -1,0 +1,53 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Amazon Inspector for vulnerability scanning
+
+Resources:
+  InspectorResourceGroup:
+    Type: AWS::Inspector::ResourceGroup
+    Properties:
+      ResourceGroupTags:
+        - Key: Inspector
+          Value: 'true'
+
+  InspectorAssessmentTarget:
+    Type: AWS::Inspector::AssessmentTarget
+    Properties:
+      AssessmentTargetName: production-servers
+      ResourceGroupArn: !GetAtt InspectorResourceGroup.Arn
+
+  InspectorAssessmentTemplate:
+    Type: AWS::Inspector::AssessmentTemplate
+    Properties:
+      AssessmentTargetArn: !Ref InspectorAssessmentTarget
+      AssessmentTemplateName: weekly-vulnerability-scan
+      DurationInSeconds: 3600
+      RulesPackageArns:
+        - !Sub 'arn:aws:inspector:${AWS::Region}:316112463485:rulespackage/0-R01qwB5Q'
+        - !Sub 'arn:aws:inspector:${AWS::Region}:316112463485:rulespackage/0-gEjTy7T7'
+        - !Sub 'arn:aws:inspector:${AWS::Region}:316112463485:rulespackage/0-rExsr2X8'
+
+  InspectorSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: inspector-findings
+      DisplayName: Inspector Vulnerability Findings
+
+  InspectorEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: inspector-findings-rule
+      Description: Route Inspector findings to SNS
+      EventPattern:
+        source:
+          - aws.inspector
+        detail-type:
+          - Inspector Assessment Run State Change
+      State: ENABLED
+      Targets:
+        - Arn: !Ref InspectorSNSTopic
+          Id: InspectorSNS
+
+Outputs:
+  AssessmentTemplateArn:
+    Description: Inspector Assessment Template ARN
+    Value: !Ref InspectorAssessmentTemplate

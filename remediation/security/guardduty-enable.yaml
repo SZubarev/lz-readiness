@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Enable Amazon GuardDuty for threat detection
+
+Resources:
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      DataSources:
+        S3Logs:
+          Enable: true
+        Kubernetes:
+          AuditLogs:
+            Enable: true
+        MalwareProtection:
+          ScanEc2InstanceWithFindings:
+            EbsVolumes:
+              Enable: true
+
+  GuardDutySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: guardduty-findings
+      DisplayName: GuardDuty Findings Notifications
+
+  GuardDutyEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: guardduty-findings-rule
+      Description: Route GuardDuty findings to SNS
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Finding
+      State: ENABLED
+      Targets:
+        - Arn: !Ref GuardDutySNSTopic
+          Id: GuardDutySNS
+
+Outputs:
+  DetectorId:
+    Description: GuardDuty Detector ID
+    Value: !Ref GuardDutyDetector
+  SNSTopicArn:
+    Description: SNS Topic for GuardDuty findings
+    Value: !Ref GuardDutySNSTopic

@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Enable Amazon Macie for PII detection and data classification
+
+Resources:
+  MacieSession:
+    Type: AWS::Macie::Session
+    Properties:
+      Status: ENABLED
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  MacieFindingsSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: macie-findings
+      DisplayName: Macie PII Detection Findings
+
+  MacieEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: macie-findings-rule
+      Description: Route Macie findings to SNS
+      EventPattern:
+        source:
+          - aws.macie
+        detail-type:
+          - Macie Finding
+      State: ENABLED
+      Targets:
+        - Arn: !Ref MacieFindingsSNSTopic
+          Id: MacieSNS
+
+  MacieCustomDataIdentifier:
+    Type: AWS::Macie::CustomDataIdentifier
+    Properties:
+      Name: financial-account-numbers
+      Description: Detect financial account numbers
+      Regex: '\b\d{8,17}\b'
+      MaximumMatchDistance: 50
+
+Outputs:
+  MacieSessionArn:
+    Description: Macie Session ARN
+    Value: !GetAtt MacieSession.ServiceRoleArn
+  SNSTopicArn:
+    Description: SNS Topic for Macie findings
+    Value: !Ref MacieFindingsSNSTopic
