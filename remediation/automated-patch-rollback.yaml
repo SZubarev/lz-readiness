@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Automated Patch Rollback System - Monitors post-patch metrics and triggers automatic rollback'
+
+Parameters:
+  ErrorRateThreshold:
+    Type: Number
+    Default: 5
+    Description: Error rate percentage threshold to trigger rollback
+  LatencyThresholdMs:
+    Type: Number
+    Default: 2000
+    Description: Latency threshold in milliseconds to trigger rollback
+  EvaluationPeriodMinutes:
+    Type: Number
+    Default: 5
+    Description: Minutes to monitor after patch before triggering rollback
+
+Resources:
+  PatchRollbackStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: PatchRollbackAutomation
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Automated patch rollback based on CloudWatch metrics",
+          "StartAt": "WaitForStabilization",
+          "States": {
+            "WaitForStabilization": {
+              "Type": "Wait",
+              "Seconds": ${EvaluationPeriodMinutes},
+              "Next": "EvaluateMetrics"
+            },
+            "EvaluateMetrics": {
+              "Type": "Task",
+              "Resource": "${MetricsEvaluationFunction.Arn}",
+              "Next": "CheckRollbackDecision"
+            },
+            "CheckRollbackDecision": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.rollbackRequired",
+                  "BooleanEquals": true,
+                  "Next": "ExecuteRollback"
+                }
+              ],
+              "Default": "PatchSuccessful"
+            },
+            "ExecuteRollback": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:ssm:sendCommand",
+              "Parameters": {
+                "DocumentName": "AWS-RunPatchBaseline",
+                "Targets": [
+                  {
+                    "Key": "tag:PatchGroup",
+                    "Values.$": "$.patchGroup"
+                  }
+                ],
+                "Parameters": {
+                  "Operation": ["Install"],
+                  "RebootOption": ["RebootIfNeeded"],
+                  "BaselineOverride": ["$.previousBaseline"]
+                }
+              },
+              "Next": "SendRollbackNotification"
+            },
+            "SendRollbackNotification": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sns:publish",
+              "Parameters": {
+                "TopicArn": "${PatchRollbackTopic}",
+                "Subject": "AUTOMATED PATCH ROLLBACK TRIGGERED",
+                "Message.$": "$.rollbackReason"
+              },
+              "End": true
+            },
+            "PatchSuccessful": {
+              "Type": "Succeed"
+            }
+          }
+        }
+
+  MetricsEvaluationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: PatchMetricsEvaluator
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          ERROR_RATE_THRESHOLD: !Ref ErrorRateThreshold
+          LATENCY_THRESHOLD_MS: !Ref LatencyThresholdMs
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          from datetime import datetime, timedelta
+          
+          cloudwatch = boto3.client('cloudwatch')
+          
+          def handler(event, context):
+              error_threshold = float(os.environ['ERROR_RATE_THRESHOLD'])
+              latency_threshold = float(os.environ['LATENCY_THRESHOLD_MS'])
+              
+              # Query CloudWatch metrics for error rate and latency
+              end_time = datetime.utcnow()
+              start_time = end_time - timedelta(minutes=5)
+              
+              error_rate = get_metric_avg('ApplicationErrors', start_time, end_time)
+              latency = get_metric_avg('ApplicationLatency', start_time, end_time)
+              
+              rollback_required = False
+              reasons = []
+              
+              if error_rate > error_threshold:
+                  rollback_required = True
+                  reasons.append(f"Error rate {error_rate}% exceeds threshold {error_threshold}%")
+              
+              if latency > latency_threshold:
+                  rollback_required = True
+                  reasons.append(f"Latency {latency}ms exceeds threshold {latency_threshold}ms")
+              
+              return {
+                  'rollbackRequired': rollback_required,
+                  'rollbackReason': '; '.join(reasons),
+                  'errorRate': error_rate,
+                  'latency': latency
+              }
+          
+          def get_metric_avg(metric_name, start_time, end_time):
+              response = cloudwatch.get_metric_statistics(
+                  Namespace='AWS/ApplicationInsights',
+                  MetricName=metric_name,
+                  StartTime=start_time,
+                  EndTime=end_time,
+                  Period=300,
+                  Statistics=['Average']
+              )
+              if response['Datapoints']:
+                  return response['Datapoints'][0]['Average']
+              return 0
+
+  PatchRollbackTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: PatchRollbackNotifications
+      DisplayName: Automated Patch Rollback Alerts
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSSystemsManagerFullAccess
+      Policies:
+        - PolicyName: StepFunctionsExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - sns:Publish
+                Resource: '*'
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref PatchRollbackStateMachine
+    Description: ARN of the patch rollback state machine
+  SNSTopicArn:
+    Value: !Ref PatchRollbackTopic
+    Description: SNS topic for rollback notifications
