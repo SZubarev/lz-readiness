@@ -1,0 +1,242 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Automated PII Remediation - Quarantines or encrypts S3 objects with detected PII'
+
+Parameters:
+  QuarantineBucketName:
+    Type: String
+    Default: pii-quarantine-bucket
+    Description: S3 bucket for quarantined PII objects
+  RemediationAction:
+    Type: String
+    Default: QUARANTINE
+    AllowedValues:
+      - QUARANTINE
+      - ENCRYPT
+      - DELETE
+    Description: Action to take when PII is detected
+
+Resources:
+  QuarantineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${QuarantineBucketName}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref QuarantineKMSKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule:
+          DefaultRetention:
+            Mode: GOVERNANCE
+            Days: 90
+
+  QuarantineKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for PII quarantine bucket
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  MacieEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: MaciePIIDetectionRule
+      Description: Triggers remediation when Macie detects PII
+      EventPattern:
+        source:
+          - aws.macie
+        detail-type:
+          - Macie Finding
+        detail:
+          severity:
+            description:
+              - High
+              - Critical
+          category:
+            - CLASSIFICATION
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt PIIRemediationFunction.Arn
+          Id: PIIRemediationTarget
+
+  PIIRemediationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: MaciePIIAutoRemediation
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 300
+      Role: !GetAtt LambdaRemediationRole.Arn
+      Environment:
+        Variables:
+          QUARANTINE_BUCKET: !Ref QuarantineBucket
+          REMEDIATION_ACTION: !Ref RemediationAction
+          SNS_TOPIC_ARN: !Ref PIIAlertTopic
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          from datetime import datetime
+          
+          s3 = boto3.client('s3')
+          sns = boto3.client('sns')
+          
+          def handler(event, context):
+              finding = event['detail']
+              remediation_action = os.environ['REMEDIATION_ACTION']
+              
+              # Extract S3 object details from Macie finding
+              s3_bucket = finding['resources'][0]['s3Bucket']['name']
+              s3_key = finding['resources'][0]['s3Object']['key']
+              
+              print(f"PII detected in s3://{s3_bucket}/{s3_key}")
+              print(f"Finding ID: {finding['id']}")
+              print(f"Severity: {finding['severity']['description']}")
+              
+              # Execute remediation
+              if remediation_action == 'QUARANTINE':
+                  result = quarantine_object(s3_bucket, s3_key)
+              elif remediation_action == 'ENCRYPT':
+                  result = encrypt_object(s3_bucket, s3_key)
+              elif remediation_action == 'DELETE':
+                  result = delete_object(s3_bucket, s3_key)
+              
+              # Send notification
+              send_notification(finding, result)
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps(result)
+              }
+          
+          def quarantine_object(bucket, key):
+              quarantine_bucket = os.environ['QUARANTINE_BUCKET']
+              copy_source = {'Bucket': bucket, 'Key': key}
+              quarantine_key = f"{datetime.utcnow().strftime('%Y-%m-%d')}/{bucket}/{key}"
+              
+              # Copy to quarantine bucket
+              s3.copy_object(
+                  CopySource=copy_source,
+                  Bucket=quarantine_bucket,
+                  Key=quarantine_key,
+                  ServerSideEncryption='aws:kms'
+              )
+              
+              # Delete from original location
+              s3.delete_object(Bucket=bucket, Key=key)
+              
+              return {
+                  'action': 'QUARANTINE',
+                  'source': f"s3://{bucket}/{key}",
+                  'destination': f"s3://{quarantine_bucket}/{quarantine_key}"
+              }
+          
+          def encrypt_object(bucket, key):
+              # Re-encrypt with KMS
+              s3.copy_object(
+                  CopySource={'Bucket': bucket, 'Key': key},
+                  Bucket=bucket,
+                  Key=key,
+                  ServerSideEncryption='aws:kms',
+                  Metadata={'pii-remediated': 'true'},
+                  MetadataDirective='REPLACE'
+              )
+              return {'action': 'ENCRYPT', 'object': f"s3://{bucket}/{key}"}
+          
+          def delete_object(bucket, key):
+              s3.delete_object(Bucket=bucket, Key=key)
+              return {'action': 'DELETE', 'object': f"s3://{bucket}/{key}"}
+          
+          def send_notification(finding, result):
+              message = f"""PII Remediation Alert
+              
+              Finding ID: {finding['id']}
+              Severity: {finding['severity']['description']}
+              
+              Remediation Action: {result['action']}
+              Details: {json.dumps(result, indent=2)}
+              
+              Timestamp: {datetime.utcnow().isoformat()}
+              """
+              
+              sns.publish(
+                  TopicArn=os.environ['SNS_TOPIC_ARN'],
+                  Subject='Automated PII Remediation Executed',
+                  Message=message
+              )
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PIIRemediationFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MacieEventBridgeRule.Arn
+
+  LambdaRemediationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3RemediationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:CopyObject
+                  - s3:PutObject
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref PIIAlertTopic
+
+  PIIAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: PIIRemediationAlerts
+      DisplayName: PII Auto-Remediation Notifications
+
+Outputs:
+  QuarantineBucketName:
+    Value: !Ref QuarantineBucket
+    Description: S3 bucket for quarantined PII objects
+  LambdaFunctionArn:
+    Value: !GetAtt PIIRemediationFunction.Arn
+    Description: ARN of the PII remediation Lambda function
+  SNSTopicArn:
+    Value: !Ref PIIAlertTopic
+    Description: SNS topic for remediation alerts
