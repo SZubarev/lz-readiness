@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LZ Readiness Remediation - Enable Amazon GuardDuty for threat detection'
+
+Resources:
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      Tags:
+        - Key: compliance_scope
+          Value: pci-dss
+        - Key: Purpose
+          Value: ThreatDetection
+
+  GuardDutyNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: guardduty-findings
+      DisplayName: GuardDuty Security Findings
+      Subscription:
+        - Endpoint: security-team@meridianfreight.example
+          Protocol: email
+
+  GuardDutyEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: GuardDutyFindingsRule
+      Description: Route GuardDuty findings to SNS
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Finding
+        detail:
+          severity:
+            - 4
+            - 4.0
+            - 4.1
+            - 4.2
+            - 4.3
+            - 4.4
+            - 4.5
+            - 4.6
+            - 4.7
+            - 4.8
+            - 4.9
+            - 5
+            - 5.0
+            - 5.1
+            - 5.2
+            - 5.3
+            - 5.4
+            - 5.5
+            - 5.6
+            - 5.7
+            - 5.8
+            - 5.9
+            - 6
+            - 6.0
+            - 6.1
+            - 6.2
+            - 6.3
+            - 6.4
+            - 6.5
+            - 6.6
+            - 6.7
+            - 6.8
+            - 6.9
+            - 7
+            - 7.0
+            - 7.1
+            - 7.2
+            - 7.3
+            - 7.4
+            - 7.5
+            - 7.6
+            - 7.7
+            - 7.8
+            - 7.9
+            - 8
+            - 8.0
+            - 8.1
+            - 8.2
+            - 8.3
+            - 8.4
+            - 8.5
+            - 8.6
+            - 8.7
+            - 8.8
+            - 8.9
+      Targets:
+        - Arn: !Ref GuardDutyNotificationTopic
+          Id: GuardDutyToSNS
+
+  GuardDutyEventRulePermission:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref GuardDutyNotificationTopic
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref GuardDutyNotificationTopic
+
+Outputs:
+  DetectorId:
+    Description: GuardDuty Detector ID
+    Value: !Ref GuardDutyDetector
+    Export:
+      Name: GuardDutyDetectorId
+  NotificationTopicArn:
+    Description: SNS Topic for GuardDuty notifications
+    Value: !Ref GuardDutyNotificationTopic

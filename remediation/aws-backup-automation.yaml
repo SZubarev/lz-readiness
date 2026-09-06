@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LZ Readiness Remediation - Enable automated AWS Backup for business-critical workloads'
+
+Parameters:
+  BackupVaultName:
+    Type: String
+    Default: BusinessCriticalBackupVault
+    Description: Name of the backup vault
+
+Resources:
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Ref BackupVaultName
+      EncryptionKeyArn: !GetAtt BackupVaultKey.Arn
+
+  BackupVaultKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for backup vault encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow AWS Backup
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+      EnableKeyRotation: true
+
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup'
+        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores'
+
+  DailyBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: BusinessCriticalDailyBackup
+        BackupPlanRule:
+          - RuleName: DailyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 2 * * ? *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 7
+              MoveToColdStorageAfterDays: 1
+            RecoveryPointTags:
+              backup_frequency: daily
+              compliance_scope: pci-dss
+          - RuleName: WeeklyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 3 ? * SUN *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 28
+              MoveToColdStorageAfterDays: 7
+            RecoveryPointTags:
+              backup_frequency: weekly
+              compliance_scope: pci-dss
+          - RuleName: MonthlyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: 'cron(0 4 1 * ? *)'
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 240
+            Lifecycle:
+              DeleteAfterDays: 365
+              MoveToColdStorageAfterDays: 30
+            RecoveryPointTags:
+              backup_frequency: monthly
+              compliance_scope: pci-dss,sox
+        AdvancedBackupSettings:
+          - ResourceType: RDS
+            BackupOptions:
+              WindowsVSS: enabled
+
+  BackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref DailyBackupPlan
+      BackupSelection:
+        SelectionName: BusinessCriticalResources
+        IamRoleArn: !GetAtt BackupRole.Arn
+        ListOfTags:
+          - ConditionType: STRINGEQUALS
+            ConditionKey: backup_required
+            ConditionValue: daily
+          - ConditionType: STRINGEQUALS
+            ConditionKey: criticality
+            ConditionValue: business_critical
+
+  BackupFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: BackupFailureAlarm
+      AlarmDescription: Alert on backup job failures
+      MetricName: NumberOfBackupJobsFailed
+      Namespace: AWS/Backup
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  BackupVaultArn:
+    Description: Backup Vault ARN
+    Value: !GetAtt BackupVault.BackupVaultArn
+  BackupPlanId:
+    Description: Backup Plan ID
+    Value: !Ref DailyBackupPlan
+  BackupRoleArn:
+    Description: IAM Role for AWS Backup
+    Value: !GetAtt BackupRole.Arn

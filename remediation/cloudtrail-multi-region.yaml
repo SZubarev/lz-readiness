@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LZ Readiness Remediation - Enable CloudTrail in all regions with 1-year retention (PCI-DSS/SOX requirement)'
+
+Parameters:
+  CloudTrailBucketName:
+    Type: String
+    Default: meridian-cloudtrail-logs
+    Description: S3 bucket name for CloudTrail logs (must be globally unique)
+
+Resources:
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${CloudTrailBucketName}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: RetainLogs1Year
+            Status: Enabled
+            ExpirationInDays: 365
+            NoncurrentVersionExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule:
+          DefaultRetention:
+            Mode: GOVERNANCE
+            Days: 365
+      Tags:
+        - Key: compliance_scope
+          Value: pci-dss,sox
+        - Key: Purpose
+          Value: AuditLogging
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/cloudtrail/organization
+      RetentionInDays: 365
+
+  CloudTrailRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudTrailCloudWatchLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt CloudTrailLogGroup.Arn
+
+  OrganizationTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn:
+      - CloudTrailBucketPolicy
+    Properties:
+      TrailName: OrganizationTrail
+      S3BucketName: !Ref CloudTrailBucket
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+      CloudWatchLogsLogGroupArn: !GetAtt CloudTrailLogGroup.Arn
+      CloudWatchLogsRoleArn: !GetAtt CloudTrailRole.Arn
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources:
+            - Type: AWS::S3::Object
+              Values:
+                - 'arn:aws:s3:::*/*'
+            - Type: AWS::Lambda::Function
+              Values:
+                - 'arn:aws:lambda:*:*:function/*'
+      Tags:
+        - Key: compliance_scope
+          Value: pci-dss,sox
+        - Key: Purpose
+          Value: AuditLogging
+
+Outputs:
+  TrailArn:
+    Description: CloudTrail ARN
+    Value: !GetAtt OrganizationTrail.Arn
+  BucketName:
+    Description: S3 bucket for CloudTrail logs
+    Value: !Ref CloudTrailBucket
+  LogGroupArn:
+    Description: CloudWatch Log Group for CloudTrail
+    Value: !GetAtt CloudTrailLogGroup.Arn

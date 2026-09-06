@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LZ Readiness Remediation - Enforce mandatory cost allocation tags via AWS Config'
+
+Resources:
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      Name: default
+      RoleArn: !GetAtt ConfigRole.Arn
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/ConfigRole'
+      Policies:
+        - PolicyName: ConfigS3Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetBucketVersioning'
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                Resource:
+                  - !Sub '${ConfigBucket.Arn}'
+                  - !Sub '${ConfigBucket.Arn}/*'
+
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'config-recordings-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      Name: default
+      S3BucketName: !Ref ConfigBucket
+
+  RequiredTagsCostCenter:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+      - ConfigDeliveryChannel
+    Properties:
+      ConfigRuleName: required-tags-cost-center
+      Description: Checks whether resources are tagged with cost_center
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters:
+        tag1Key: cost_center
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+          - AWS::RDS::DBInstance
+          - AWS::S3::Bucket
+          - AWS::Lambda::Function
+          - AWS::DynamoDB::Table
+
+  RequiredTagsAppOwner:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+      - ConfigDeliveryChannel
+    Properties:
+      ConfigRuleName: required-tags-app-owner
+      Description: Checks whether resources are tagged with app_owner
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters:
+        tag1Key: app_owner
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+          - AWS::RDS::DBInstance
+          - AWS::S3::Bucket
+          - AWS::Lambda::Function
+
+  RequiredTagsEnvironment:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+      - ConfigDeliveryChannel
+    Properties:
+      ConfigRuleName: required-tags-environment
+      Description: Checks whether resources are tagged with environment
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters:
+        tag1Key: environment
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+          - AWS::RDS::DBInstance
+          - AWS::S3::Bucket
+          - AWS::Lambda::Function
+
+  RequiredTagsComplianceScope:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+      - ConfigDeliveryChannel
+    Properties:
+      ConfigRuleName: required-tags-compliance-scope
+      Description: Checks whether resources are tagged with compliance_scope
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters:
+        tag1Key: compliance_scope
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+          - AWS::RDS::DBInstance
+          - AWS::S3::Bucket
+
+  NonCompliantResourcesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: NonCompliantTaggingAlarm
+      AlarmDescription: Alert when resources are not properly tagged
+      MetricName: ComplianceScore
+      Namespace: AWS/Config
+      Statistic: Average
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 95
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ConfigRoleArn:
+    Description: IAM Role for AWS Config
+    Value: !GetAtt ConfigRole.Arn
+  ConfigBucketName:
+    Description: S3 bucket for Config recordings
+    Value: !Ref ConfigBucket
