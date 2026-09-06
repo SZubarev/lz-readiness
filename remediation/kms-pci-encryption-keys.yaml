@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LZ Readiness Remediation - Create KMS Customer Managed Keys for PCI-DSS encryption'
+
+Parameters:
+  KeyAdministratorRoleArn:
+    Type: String
+    Description: ARN of IAM role for key administrators
+    Default: ''
+
+Resources:
+  RDSEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for RDS encryption (PCI-DSS cardholder data)
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow RDS to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:DescribeKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+          - Sid: Allow CloudWatch Logs
+            Effect: Allow
+            Principal:
+              Service: logs.amazonaws.com
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:CreateGrant'
+              - 'kms:DescribeKey'
+            Resource: '*'
+            Condition:
+              ArnLike:
+                'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*'
+      EnableKeyRotation: true
+      Tags:
+        - Key: compliance_scope
+          Value: pci-dss
+        - Key: Purpose
+          Value: DatabaseEncryption
+
+  RDSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/pci/rds-encryption
+      TargetKeyId: !Ref RDSEncryptionKey
+
+  EBSEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for EBS encryption (PCI-DSS environment)
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow EC2 to use the key
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:DescribeKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+          - Sid: Allow Autoscaling to use the key
+            Effect: Allow
+            Principal:
+              Service: autoscaling.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:DescribeKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+      EnableKeyRotation: true
+      Tags:
+        - Key: compliance_scope
+          Value: pci-dss
+        - Key: Purpose
+          Value: VolumeEncryption
+
+  EBSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/pci/ebs-encryption
+      TargetKeyId: !Ref EBSEncryptionKey
+
+  S3EncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for S3 encryption (PCI-DSS backups and logs)
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow S3 to use the key
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+          - Sid: Allow AWS Backup
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+      EnableKeyRotation: true
+      Tags:
+        - Key: compliance_scope
+          Value: pci-dss
+        - Key: Purpose
+          Value: BackupEncryption
+
+  S3KeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/pci/s3-encryption
+      TargetKeyId: !Ref S3EncryptionKey
+
+Outputs:
+  RDSKeyId:
+    Description: KMS Key ID for RDS encryption
+    Value: !Ref RDSEncryptionKey
+    Export:
+      Name: PCI-RDS-KMS-Key
+  RDSKeyArn:
+    Description: KMS Key ARN for RDS encryption
+    Value: !GetAtt RDSEncryptionKey.Arn
+  EBSKeyId:
+    Description: KMS Key ID for EBS encryption
+    Value: !Ref EBSEncryptionKey
+    Export:
+      Name: PCI-EBS-KMS-Key
+  EBSKeyArn:
+    Description: KMS Key ARN for EBS encryption
+    Value: !GetAtt EBSEncryptionKey.Arn
+  S3KeyId:
+    Description: KMS Key ID for S3 encryption
+    Value: !Ref S3EncryptionKey
+    Export:
+      Name: PCI-S3-KMS-Key
+  S3KeyArn:
+    Description: KMS Key ARN for S3 encryption
+    Value: !GetAtt S3EncryptionKey.Arn
