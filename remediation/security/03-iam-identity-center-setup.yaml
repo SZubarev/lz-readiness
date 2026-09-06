@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM Identity Center (AWS SSO) foundational configuration'
+
+Parameters:
+  IdentityStoreId:
+    Type: String
+    Description: Identity Store ID from IAM Identity Center
+
+Resources:
+  AdminPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: AdministratorAccess
+      Description: Full administrator access for privileged users
+      InstanceArn: !Sub 'arn:aws:sso:::instance/${IdentityStoreId}'
+      SessionDuration: PT4H
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  ReadOnlyPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: ReadOnlyAccess
+      Description: Read-only access for auditors and viewers
+      InstanceArn: !Sub 'arn:aws:sso:::instance/${IdentityStoreId}'
+      SessionDuration: PT8H
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  DeveloperPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: DeveloperAccess
+      Description: Developer access for non-production environments
+      InstanceArn: !Sub 'arn:aws:sso:::instance/${IdentityStoreId}'
+      SessionDuration: PT8H
+      InlinePolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ec2:*'
+              - 'rds:*'
+              - 's3:*'
+              - 'lambda:*'
+              - 'cloudformation:*'
+            Resource: '*'
+          - Effect: Deny
+            Action:
+              - 'iam:*'
+              - 'organizations:*'
+              - 'account:*'
+            Resource: '*'
+
+Outputs:
+  AdminPermissionSetArn:
+    Description: ARN of Administrator Permission Set
+    Value: !GetAtt AdminPermissionSet.PermissionSetArn
+  ReadOnlyPermissionSetArn:
+    Description: ARN of ReadOnly Permission Set
+    Value: !GetAtt ReadOnlyPermissionSet.PermissionSetArn
+  DeveloperPermissionSetArn:
+    Description: ARN of Developer Permission Set
+    Value: !GetAtt DeveloperPermissionSet.PermissionSetArn

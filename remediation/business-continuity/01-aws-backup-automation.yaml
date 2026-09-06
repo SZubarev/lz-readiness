@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Backup automation with encryption for databases and EC2 instances'
+
+Parameters:
+  BackupVaultName:
+    Type: String
+    Default: production-backup-vault
+    Description: Name of the AWS Backup vault
+
+Resources:
+  BackupVaultKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for AWS Backup vault encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow AWS Backup to use the key
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:CreateGrant'
+            Resource: '*'
+
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Ref BackupVaultName
+      EncryptionKeyArn: !GetAtt BackupVaultKey.Arn
+
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+  ProductionDatabaseBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: production-database-backup
+        BackupPlanRule:
+          - RuleName: HourlyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 * * * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 365
+            RecoveryPointTags:
+              Environment: Production
+              BackupType: Hourly
+              ComplianceScope: PCI-DSS
+          - RuleName: DailyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 2 * * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 365
+              MoveToColdStorageAfterDays: 30
+            RecoveryPointTags:
+              Environment: Production
+              BackupType: Daily
+              ComplianceScope: SOX
+
+  ProductionBackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref ProductionDatabaseBackupPlan
+      BackupSelection:
+        SelectionName: production-resources
+        IamRoleArn: !GetAtt BackupRole.Arn
+        ListOfTags:
+          - ConditionType: STRINGEQUALS
+            ConditionKey: Environment
+            ConditionValue: Production
+
+Outputs:
+  BackupVaultArn:
+    Description: ARN of the backup vault
+    Value: !GetAtt BackupVault.BackupVaultArn
+  BackupPlanId:
+    Description: Backup Plan ID
+    Value: !Ref ProductionDatabaseBackupPlan
