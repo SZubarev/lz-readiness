@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Network Firewall for stateful inspection'
+
+Parameters:
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC for Network Firewall'
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: 'Subnet for firewall endpoint'
+
+Resources:
+  FirewallPolicy:
+    Type: AWS::NetworkFirewall::FirewallPolicy
+    Properties:
+      FirewallPolicyName: org-firewall-policy
+      FirewallPolicy:
+        StatelessDefaultActions:
+          - aws:forward_to_sfe
+        StatelessFragmentDefaultActions:
+          - aws:forward_to_sfe
+        StatefulRuleGroupReferences:
+          - ResourceArn: !GetAtt StatefulRuleGroup.RuleGroupArn
+
+  StatefulRuleGroup:
+    Type: AWS::NetworkFirewall::RuleGroup
+    Properties:
+      RuleGroupName: block-malicious-domains
+      Type: STATEFUL
+      Capacity: 100
+      RuleGroup:
+        RulesSource:
+          RulesSourceList:
+            TargetTypes:
+              - HTTP_HOST
+              - TLS_SNI
+            Targets:
+              - .malicious.com
+            GeneratedRulesType: DENYLIST
+
+  NetworkFirewall:
+    Type: AWS::NetworkFirewall::Firewall
+    Properties:
+      FirewallName: org-network-firewall
+      FirewallPolicyArn: !GetAtt FirewallPolicy.FirewallPolicyArn
+      VpcId: !Ref VPCId
+      SubnetMappings:
+        - SubnetId: !Ref SubnetId
+      Tags:
+        - Key: Name
+          Value: org-network-firewall

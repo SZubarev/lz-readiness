@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Route 53 Resolver with private hosted zones'
+
+Parameters:
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC for DNS resolution'
+
+Resources:
+  PrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: internal.company.com
+      VPCs:
+        - VPCId: !Ref VPCId
+          VPCRegion: !Ref AWS::Region
+      HostedZoneConfig:
+        Comment: 'Private hosted zone for internal DNS'
+
+  ResolverRuleForwarder:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: onprem.company.com
+      Name: OnPremiseForwarder
+      RuleType: FORWARD
+      ResolverEndpointId: !Ref OutboundResolverEndpoint
+      TargetIps:
+        - Ip: 10.1.0.10
+          Port: 53
+
+  OutboundResolverEndpoint:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      Name: OutboundEndpoint
+      SecurityGroupIds:
+        - !Ref ResolverSecurityGroup
+      IpAddresses:
+        - SubnetId: !Ref PrivateSubnet1
+        - SubnetId: !Ref PrivateSubnet2
+
+  ResolverSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for Route 53 Resolver'
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.0.0.0/8
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.0.0.0/8

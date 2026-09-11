@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'KMS customer-managed keys with automatic rotation'
+
+Resources:
+  DataEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: 'CMK for data encryption at rest'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow services to use key
+            Effect: Allow
+            Principal:
+              Service:
+                - s3.amazonaws.com
+                - rds.amazonaws.com
+                - dynamodb.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/data-encryption
+      TargetKeyId: !Ref DataEncryptionKey
+
+Outputs:
+  DataKeyId:
+    Description: 'Data encryption KMS key ID'
+    Value: !Ref DataEncryptionKey
+    Export:
+      Name: !Sub '${AWS::StackName}-DataKeyId'
+  
+  DataKeyArn:
+    Description: 'Data encryption KMS key ARN'
+    Value: !GetAtt DataEncryptionKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DataKeyArn'

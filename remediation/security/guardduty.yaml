@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GuardDuty threat detection with Security Hub integration'
+
+Resources:
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+      DataSources:
+        S3Logs:
+          Enable: true
+        Kubernetes:
+          AuditLogs:
+            Enable: true
+
+  SecurityHub:
+    Type: AWS::SecurityHub::Hub
+    Properties:
+      ControlFindingGenerator: SECURITY_CONTROL
+      Tags:
+        Name: org-security-hub
+
+  GuardDutyProductSubscription:
+    Type: AWS::SecurityHub::ProductSubscription
+    DependsOn:
+      - SecurityHub
+      - GuardDutyDetector
+    Properties:
+      ProductArn: !Sub 'arn:aws:securityhub:${AWS::Region}::product/aws/guardduty'
+
+Outputs:
+  GuardDutyDetectorId:
+    Description: 'GuardDuty Detector ID'
+    Value: !Ref GuardDutyDetector
+    Export:
+      Name: !Sub '${AWS::StackName}-DetectorId'

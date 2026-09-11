@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS IPAM for centralized IP address management'
+
+Resources:
+  IPAMScope:
+    Type: AWS::EC2::IPAM
+    Properties:
+      Description: 'Organization-wide IPAM'
+      OperatingRegions:
+        - RegionName: !Ref AWS::Region
+      Tags:
+        - Key: Name
+          Value: org-ipam
+
+  IPAMPool:
+    Type: AWS::EC2::IPAMPool
+    Properties:
+      AddressFamily: ipv4
+      IpamScopeId: !GetAtt IPAMScope.PrivateDefaultScopeId
+      ProvisionedCidrs:
+        - Cidr: 10.0.0.0/8
+      Description: 'Organization CIDR pool'
+      AutoImport: true
+      Tags:
+        - Key: Name
+          Value: org-ipam-pool
+
+Outputs:
+  IPAMId:
+    Description: 'IPAM Resource ID'
+    Value: !Ref IPAMScope
+    Export:
+      Name: !Sub '${AWS::StackName}-IPAMId'
+  
+  IPAMPoolId:
+    Description: 'IPAM Pool ID'
+    Value: !Ref IPAMPool
+    Export:
+      Name: !Sub '${AWS::StackName}-IPAMPoolId'
