@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enable VPC Flow Logs for network monitoring and security analysis'
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID to enable flow logs for
+    Default: vpc-xxx
+  RetentionDays:
+    Type: Number
+    Description: CloudWatch Logs retention in days
+    Default: 90
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+
+Resources:
+  FlowLogsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpc/flowlogs/${VpcId}'
+      RetentionInDays: !Ref RetentionDays
+
+  FlowLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt FlowLogsLogGroup.Arn
+
+  VpcFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceIds:
+        - !Ref VpcId
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogsLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcId}-flow-logs'
+        - Key: CostCenter
+          Value: '123'
+        - Key: BU
+          Value: IT
+
+Outputs:
+  LogGroupName:
+    Description: CloudWatch Logs group for VPC Flow Logs
+    Value: !Ref FlowLogsLogGroup
+  FlowLogId:
+    Description: VPC Flow Log ID
+    Value: !Ref VpcFlowLog

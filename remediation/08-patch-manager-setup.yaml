@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Systems Manager Patch Manager configuration with maintenance windows'
+
+Parameters:
+  MaintenanceWindow:
+    Type: String
+    Description: Maintenance window schedule (cron format)
+    Default: cron(0 2 ? * SUN *)
+
+Resources:
+  PatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: ubuntu-security-patches
+      Description: Patch baseline for Ubuntu Linux security updates
+      OperatingSystem: UBUNTU
+      ApprovalRules:
+        PatchRules:
+          - PatchFilterGroup:
+              PatchFilters:
+                - Key: PRIORITY
+                  Values:
+                    - Required
+                    - Important
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+            ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+      Tags:
+        - Key: CostCenter
+          Value: '123'
+        - Key: BU
+          Value: IT
+
+  MaintenanceWindowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ssm.amazonaws.com
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole
+      Policies:
+        - PolicyName: PassRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: '*'
+
+  PatchMaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      Name: weekly-patch-window
+      Description: Weekly maintenance window for patching
+      Schedule: !Ref MaintenanceWindow
+      Duration: 4
+      Cutoff: 1
+      AllowUnassociatedTargets: false
+      Tags:
+        - Key: CostCenter
+          Value: '123'
+        - Key: BU
+          Value: IT
+
+  PatchWindowTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
+    Properties:
+      WindowId: !Ref PatchMaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+        - Key: tag:Environment
+          Values:
+            - prod
+      Name: prod-instances
+
+  PatchTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      WindowId: !Ref PatchMaintenanceWindow
+      Targets:
+        - Key: WindowTargetIds
+          Values:
+            - !Ref PatchWindowTarget
+      TaskArn: AWS-RunPatchBaseline
+      ServiceRoleArn: !GetAtt MaintenanceWindowRole.Arn
+      TaskType: RUN_COMMAND
+      Priority: 1
+      MaxConcurrency: '2'
+      MaxErrors: '1'
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          Parameters:
+            Operation:
+              - Install
+
+Outputs:
+  PatchBaselineId:
+    Value: !Ref PatchBaseline
+  MaintenanceWindowId:
+    Value: !Ref PatchMaintenanceWindow
