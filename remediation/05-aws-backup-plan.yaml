@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Backup plan for automated backups with cross-region replication'
+
+Parameters:
+  BackupRetentionDays:
+    Type: Number
+    Description: Number of days to retain backups
+    Default: 35
+  SecondaryRegion:
+    Type: String
+    Description: Secondary region for backup replication
+    Default: us-west-2
+
+Resources:
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: primary-backup-vault
+      EncryptionKeyArn: !GetAtt BackupKey.Arn
+
+  BackupKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for backup encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow Backup Service
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:CreateGrant
+              - kms:DescribeKey
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+  DailyBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: daily-backup-plan
+        BackupPlanRule:
+          - RuleName: DailyBackup
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 5 * * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: !Ref BackupRetentionDays
+            CopyActions:
+              - DestinationBackupVaultArn: !Sub 'arn:aws:backup:${SecondaryRegion}:${AWS::AccountId}:backup-vault:secondary-vault'
+                Lifecycle:
+                  DeleteAfterDays: !Ref BackupRetentionDays
+
+  BackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref DailyBackupPlan
+      BackupSelection:
+        SelectionName: prod-resources
+        IamRoleArn: !GetAtt BackupRole.Arn
+        Resources:
+          - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+          - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*'
+        Conditions:
+          StringEquals:
+            - ConditionKey: aws:ResourceTag/Environment
+              ConditionValue: prod
+
+Outputs:
+  BackupVaultName:
+    Value: !Ref BackupVault
+  BackupPlanId:
+    Value: !Ref DailyBackupPlan

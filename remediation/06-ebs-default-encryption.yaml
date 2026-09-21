@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enable default EBS encryption and create KMS CMK'
+
+Resources:
+  EbsEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for default EBS volume encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow EC2 to use the key
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:CreateGrant
+              - kms:DescribeKey
+            Resource: '*'
+            Condition:
+              StringEquals:
+                kms:ViaService:
+                  - !Sub 'ec2.${AWS::Region}.amazonaws.com'
+      Tags:
+        - Key: Name
+          Value: ebs-default-encryption-key
+        - Key: CostCenter
+          Value: '123'
+        - Key: BU
+          Value: IT
+
+  EbsEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ebs-default
+      TargetKeyId: !Ref EbsEncryptionKey
+
+  # Lambda function to enable default EBS encryption
+  EnableEbsEncryptionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: enable-ebs-default-encryption
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt EnableEbsEncryptionRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              ec2 = boto3.client('ec2')
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      kms_key_id = event['ResourceProperties']['KmsKeyId']
+                      ec2.enable_ebs_encryption_by_default()
+                      ec2.modify_ebs_default_kms_key_id(KmsKeyId=kms_key_id)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(f'Error: {str(e)}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  EnableEbsEncryptionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EbsEncryptionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:EnableEbsEncryptionByDefault
+                  - ec2:ModifyEbsDefaultKmsKeyId
+                  - ec2:GetEbsEncryptionByDefault
+                  - ec2:GetEbsDefaultKmsKeyId
+                Resource: '*'
+
+  EnableEbsEncryption:
+    Type: Custom::EnableEbsEncryption
+    Properties:
+      ServiceToken: !GetAtt EnableEbsEncryptionLambda.Arn
+      KmsKeyId: !GetAtt EbsEncryptionKey.Arn
+
+Outputs:
+  KmsKeyId:
+    Description: KMS Key ID for EBS encryption
+    Value: !Ref EbsEncryptionKey
+  KmsKeyArn:
+    Description: KMS Key ARN for EBS encryption
+    Value: !GetAtt EbsEncryptionKey.Arn
